@@ -43,6 +43,12 @@ fi
 log "Verifying HARNESS.sha256"
 "$PYTHON" prepare.py verify-checksum || die "Harness checksum mismatch — hard stop"
 
+# git identity for loop commits (env only — does not write git config)
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-autoregen-loop}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-autoregen@local}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-autoregen-loop}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-autoregen@local}"
+
 # git setup
 if [[ ! -d .git ]]; then
   git init
@@ -301,27 +307,41 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# Ownership gate: only solver.py may change
+# Ownership gate: only solver.py may be agent-edited.
+# Never `git checkout -- .` here — that would clobber loop.sh / harness work.
 # ---------------------------------------------------------------------------
 assert_only_solver_dirty() {
-  local dirty
-  dirty="$(git diff --name-only HEAD 2>/dev/null || true)"
-  dirty="$(echo "$dirty" | grep -v '^$' || true)"
-  if [[ -z "$dirty" ]]; then
-    # also check untracked? agent shouldn't create files
-    return 0
-  fi
-  local bad
-  bad="$(echo "$dirty" | grep -v '^solver\.py$' || true)"
-  if [[ -n "$bad" ]]; then
-    log "VIOLATION: agent touched non-solver files:"
-    echo "$bad"
-    git checkout -- .
-    git clean -fd --exclude=data --exclude=.venv --exclude=last_eval.json \
-      --exclude=best_per_task.json --exclude=results.tsv --exclude=plots \
-      --exclude=noise_floor.json --exclude=.hypothesis.txt 2>/dev/null || true
-    echo "ownership_violation" >> "$ROOT/violations.log"
+  # Forbidden paths the agent must not modify relative to HEAD
+  local critical
+  critical="$(git diff --name-only HEAD -- prepare.py harness HARNESS.sha256 program.md 2>/dev/null || true)"
+  if [[ -n "$critical" ]]; then
+    log "VIOLATION: critical harness paths dirty:"
+    echo "$critical"
+    git checkout -- prepare.py harness HARNESS.sha256 program.md 2>/dev/null || true
+    if [[ -f solver.py.bak ]]; then
+      cp solver.py.bak solver.py
+    fi
+    echo "ownership_violation gen=${GEN:-?} files=$(echo "$critical" | tr '\n' ',')" >> "$ROOT/violations.log"
     return 1
+  fi
+  # Any other non-allowlisted tracked edits (besides solver.py / artifacts)
+  local dirty
+  dirty="$(git diff --name-only HEAD 2>/dev/null | grep -v -E '^(solver\.py|results\.tsv|loop\.sh)$' || true)"
+  # ignore empty
+  dirty="$(echo "$dirty" | grep -v '^$' || true)"
+  if [[ -n "$dirty" ]]; then
+    # allow plots, json artifacts that may be tracked accidentally
+    local bad
+    bad="$(echo "$dirty" | grep -v -E '^(plots/|best_per_task\.json|last_eval\.json|last_gate\.json|noise_floor\.json|violations\.log)$' || true)"
+    if [[ -n "$bad" ]]; then
+      log "VIOLATION: unexpected dirty paths:"
+      echo "$bad"
+      if [[ -f solver.py.bak ]]; then
+        cp solver.py.bak solver.py
+      fi
+      echo "ownership_violation gen=${GEN:-?} files=$(echo "$bad" | tr '\n' ',')" >> "$ROOT/violations.log"
+      return 1
+    fi
   fi
   return 0
 }
@@ -344,7 +364,6 @@ while (( GEN < MAX_GENS )); do
   log "Hypothesis: $HYP"
 
   if ! assert_only_solver_dirty; then
-    append_violation=1
     "$PYTHON" - <<PY
 from harness.eval import append_results_tsv
 from pathlib import Path
@@ -358,23 +377,24 @@ append_results_tsv(Path("results.tsv"), {
     "split": "$SPLIT", "n_tasks": 0,
 })
 PY
-    mv solver.py.bak solver.py 2>/dev/null || true
     continue
   fi
 
   # if no change, skip
   if git diff --quiet solver.py 2>/dev/null; then
     log "No change to solver.py — skip"
-    GEN=$((GEN - 1))  # don't burn a gen number... actually keep counting
-    # restore gen count meaning: keep
     sleep "$SLEEP_BETWEEN"
     continue
   fi
 
   # commit candidate
   git add solver.py
-  git commit -m "gen ${GEN}: ${HYP}" --allow-empty=false || {
-    log "Nothing to commit"
+  if git diff --cached --quiet; then
+    log "No staged change to solver.py — skip"
+    continue
+  fi
+  git commit -m "gen ${GEN}: ${HYP}" || {
+    log "Commit failed"
     continue
   }
   SHA="$(git rev-parse --short HEAD)"
@@ -396,8 +416,10 @@ PY
   set -e
 
   if [[ $EVAL_RC -ne 0 && ! -f last_eval.json ]]; then
-    log "Eval failed hard — reset"
-    git reset --hard HEAD~1
+    log "Eval failed hard — reset solver only"
+    # mixed reset keeps dirty harness/loop files; restore solver from parent
+    git reset --mixed HEAD~1
+    git checkout -- solver.py
     "$PYTHON" - <<PY
 from harness.eval import append_results_tsv
 from pathlib import Path
@@ -450,8 +472,10 @@ append_results_tsv(Path("results.tsv"), {
 })
 PY
   else
-    log "REJECTED gen=$GEN intent_err=$INTENT — reset"
-    git reset --hard HEAD~1
+    log "REJECTED gen=$GEN intent_err=$INTENT — reset solver only"
+    # Do NOT reset --hard: that wipes uncommitted loop.sh / harness edits.
+    git reset --mixed HEAD~1
+    git checkout -- solver.py
     "$PYTHON" - <<PY
 from harness.eval import append_results_tsv
 from pathlib import Path
