@@ -132,8 +132,19 @@ python benchmark_models.py --generations 3 --workers 4
 
 The built-in arms are pinned to:
 
+- Codex CLI: `gpt-5.6-sol`, high reasoning, ephemeral workspace-write session
 - Antigravity CLI: `gemini-3.6-flash-high`, high effort, edit-accepting mode
 - Grok CLI: `grok-4.5`, high reasoning, no subagents, through the pinned wrapper
+
+Append a new compatible arm to an existing run without replacing its prior
+results:
+
+```bash
+python benchmark_models.py \
+  --append-to benchmark_runs/<run-id> \
+  --arms gpt-5.6-sol-high \
+  --generations 3 --workers 4
+```
 
 Each arm starts from the same historical baseline solver, current immutable
 harness, seed 42 quick dataset, and evaluation settings. Work happens in

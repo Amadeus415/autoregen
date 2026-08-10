@@ -188,11 +188,12 @@ def plot_benchmark(run_dir: Path, out: Path) -> int:
     ax.legend(handles, labels, loc="upper left", fontsize=7.5, framealpha=0.92, ncol=2)
 
     summary_ax.text(0.02, 0.98, "Validated outcome", va="top", fontsize=12, weight="bold")
-    y = 0.88
+    y = 0.90
+    summary_step = min(0.39, 0.80 / max(len(summary_lines), 1))
     for color, label, metrics in summary_lines:
         summary_ax.text(0.02, y, label, va="top", color=color, fontsize=9.5, weight="bold")
-        summary_ax.text(0.05, y - 0.08, metrics, va="top", fontsize=9, family="monospace", linespacing=1.45)
-        y -= 0.39
+        summary_ax.text(0.05, y - 0.07, metrics, va="top", fontsize=8.5, family="monospace", linespacing=1.25)
+        y -= summary_step
     audited = manifest.get("independent_audit", {}).get("pass", False)
     status = (
         "AUDITED · VALID"

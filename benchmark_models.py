@@ -31,6 +31,11 @@ RESULT_HEADER = (
 )
 
 ARMS = {
+    "gpt-5.6-sol-high": {
+        "label": "Codex CLI · GPT-5.6 Sol High",
+        "model": "gpt-5.6-sol",
+        "driver": ROOT / "scripts" / "codex_agent.sh",
+    },
     "antigravity-flash-3.6-high": {
         "label": "Antigravity · Gemini 3.6 Flash High",
         "model": "gemini-3.6-flash-high",
@@ -116,7 +121,9 @@ def extract_ref(ref: str, destination: Path) -> str:
     return resolved
 
 
-def init_baseline(template: Path, args: argparse.Namespace) -> dict[str, Any]:
+def init_baseline(
+    template: Path, args: argparse.Namespace, *, data_source: Path | None = None
+) -> dict[str, Any]:
     (template / "results.tsv").write_text(RESULT_HEADER, encoding="utf-8")
     run(["git", "init", "-q"], cwd=template)
     run(["git", "add", "-A"], cwd=template)
@@ -133,7 +140,11 @@ def init_baseline(template: Path, args: argparse.Namespace) -> dict[str, Any]:
         ],
         cwd=template,
     )
-    run([str(PYTHON), "prepare.py", "generate", "--quick"], cwd=template)
+    if data_source is None:
+        run([str(PYTHON), "prepare.py", "generate", "--quick"], cwd=template)
+    else:
+        shutil.rmtree(template / "data", ignore_errors=True)
+        shutil.copytree(data_source, template / "data")
     run([str(PYTHON), "prepare.py", "checksum", "--write"], cwd=template)
     run(
         [
@@ -287,6 +298,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--run-id", default=None)
     p.add_argument("--arms", nargs="+", choices=sorted(ARMS), default=list(ARMS))
     p.add_argument(
+        "--append-to",
+        type=Path,
+        default=None,
+        help="append new arms to an existing compatible benchmark run",
+    )
+    p.add_argument(
         "--reuse-arm-from",
         type=Path,
         default=None,
@@ -303,18 +320,44 @@ def main() -> int:
         raise SystemExit(f"Python environment missing: {PYTHON}")
     if args.generations < 1:
         raise SystemExit("--generations must be >= 1")
-    run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output = ROOT / "benchmark_runs" / run_id
-    work = ROOT / ".benchmark_work" / run_id
-    if output.exists() or work.exists():
-        raise SystemExit(f"run id already exists: {run_id}")
-    output.mkdir(parents=True)
+    if args.append_to is not None and args.run_id is not None:
+        raise SystemExit("--append-to and --run-id are mutually exclusive")
+    if args.append_to is not None and args.reuse_arm_from is not None:
+        raise SystemExit("--append-to and --reuse-arm-from are mutually exclusive")
+
+    existing_manifest: dict[str, Any] | None = None
+    if args.append_to is not None:
+        output = args.append_to.resolve()
+        manifest_path = output / "manifest.json"
+        if not manifest_path.is_file():
+            raise SystemExit(f"existing benchmark manifest missing: {manifest_path}")
+        existing_manifest = json.loads(manifest_path.read_text())
+        run_id = str(existing_manifest.get("run_id") or output.name)
+        duplicates = sorted(set(args.arms) & set(existing_manifest.get("arms", {})))
+        if duplicates:
+            raise SystemExit(f"arms already exist in benchmark: {', '.join(duplicates)}")
+        work_id = f"{run_id}-append-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    else:
+        run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output = ROOT / "benchmark_runs" / run_id
+        if output.exists():
+            raise SystemExit(f"run id already exists: {run_id}")
+        output.mkdir(parents=True)
+        work_id = run_id
+
+    work = ROOT / ".benchmark_work" / work_id
+    if work.exists():
+        raise SystemExit(f"benchmark work directory already exists: {work}")
     work.mkdir(parents=True)
 
     template = work / "template"
     resolved = extract_ref(args.base_ref, template)
-    baseline = init_baseline(template, args)
-    manifest: dict[str, Any] = {
+    baseline = init_baseline(
+        template,
+        args,
+        data_source=ROOT / "data" if existing_manifest is not None else None,
+    )
+    fresh_manifest: dict[str, Any] = {
         "schema_version": 1,
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -333,6 +376,24 @@ def main() -> int:
         },
         "arms": {},
     }
+    if existing_manifest is not None:
+        existing_harness = existing_manifest.get("baseline", {}).get(
+            "harness_sha256"
+        ) or existing_manifest.get("independent_audit", {}).get("harness_sha256")
+        if (
+            existing_manifest.get("base_commit") != fresh_manifest["base_commit"]
+            or existing_manifest.get("settings") != fresh_manifest["settings"]
+            or existing_harness != fresh_manifest["baseline"]["harness_sha256"]
+            or existing_manifest.get("baseline", {}).get("solver_sha256")
+            != fresh_manifest["baseline"]["solver_sha256"]
+        ):
+            raise SystemExit("appended run does not match this run's baseline/settings")
+        manifest = existing_manifest
+        manifest.pop("independent_audit", None)
+        manifest["complete"] = False
+        manifest["valid"] = False
+    else:
+        manifest = fresh_manifest
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if args.preflight_only:
         print(json.dumps(manifest, indent=2))
