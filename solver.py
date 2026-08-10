@@ -394,6 +394,8 @@ def synthesize_build_source(
     # Pattern, shell, rib, boss, pocket, loft recovery is the loop's job.
     if boss_d_p or boss_h_p:
         template = "boss"
+    elif rib_h_p or rib_t_p:
+        template = "ribbed"
     elif outer_r_p and n_cyl >= 1 and not w_p:
         template = "cylinder"
     elif slot_p:
