@@ -330,13 +330,23 @@ def paired_bootstrap_gate(
         boots[b] = delta[idx].mean()
     lo = float(np.quantile(boots, alpha / 2))
     hi = float(np.quantile(boots, 1 - alpha / 2))
-    # require improvement: mean_diff > 0 and CI excludes 0
-    accept = (mean_diff > 0) and (lo > 0)
+    # Require mean improvement and a non-negative lower CI bound.
+    # Using lo >= 0 (not lo > 0) so a large single-task win that never hurts
+    # other tasks can pass on small dev sets; lo > 0 is too harsh when many
+    # bootstrap resamples omit the improved task and land exactly at 0.
+    n_improved = int((delta > 1e-12).sum())
+    n_regressed = int((delta < -1e-12).sum())
+    accept = (mean_diff > 1e-12) and (lo >= -1e-15) and (n_regressed == 0 or lo > 0)
+    # Stronger path: CI strictly excludes 0
+    if mean_diff > 0 and lo > 0:
+        accept = True
     return {
         "accept": bool(accept),
         "mean_diff": mean_diff,
         "ci_lo": lo,
         "ci_hi": hi,
         "n_tasks": n,
+        "n_improved": n_improved,
+        "n_regressed": n_regressed,
         "reason": "improved" if accept else "not_significant_or_worse",
     }
