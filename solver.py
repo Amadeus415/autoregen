@@ -392,7 +392,9 @@ def synthesize_build_source(
     n_cyl = features.get("n_cylinders", 0)
     # Gen-0 template set is intentionally small (plate / hole / fillet / cylinder).
     # Pattern, shell, rib, boss, pocket, loft recovery is the loop's job.
-    if outer_r_p and n_cyl >= 1 and not w_p:
+    if boss_d_p or boss_h_p:
+        template = "boss"
+    elif outer_r_p and n_cyl >= 1 and not w_p:
         template = "cylinder"
     elif slot_p:
         template = "slot"
