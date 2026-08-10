@@ -400,6 +400,8 @@ def synthesize_build_source(
         template = "slot"
     elif count_p and hole_p and n_cyl >= 2:
         template = "pattern"
+    elif pocket_p or cbore_p:
+        template = "pocket"
     elif hole_p and fillet_p:
         template = "plate_hole_fillet"
     elif hole_p:
