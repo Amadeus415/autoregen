@@ -97,13 +97,13 @@ def extract_features(step_path: Path) -> Dict[str, Any]:
         n_faces = 0
 
     # cluster cylinders by radius (holes)
-    hole_radii = _cluster_radii([c["radius"] for c in cylinders], tol=0.15)
+    hole_radii = _cluster_radii([c["radius"] for c in cylinders], tol=0.12)
     # dominant hole radius = most common cluster mid
     hole_r = hole_radii[0] if hole_radii else 0.0
     hole_count = 0
     if hole_radii:
         # count cylinders near dominant radius
-        hole_count = sum(1 for c in cylinders if abs(c["radius"] - hole_radii[0]) < 0.2)
+        hole_count = sum(1 for c in cylinders if abs(c["radius"] - hole_radii[0]) < 0.5)
         # each hole contributes ~1 cylindrical face (sometimes 1)
         # polar/linear patterns often show multiple same-radius cylinders
 
@@ -166,7 +166,7 @@ def _thickness_from_planes(planes: List[dict]) -> Optional[float]:
         for b in planes[i + 1 : 12]:
             na, nb = a["normal"], b["normal"]
             dot = abs(na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2])
-            if dot < 0.98:
+            if dot < 0.96:
                 continue
             # signed distance along normal
             d = (
@@ -210,7 +210,7 @@ def _guess_fillet(solid, thickness: float) -> float:
                 return float(sorted(candidates)[len(candidates) // 2])
     except Exception:
         pass
-    return max(0.5, min(2.0, thickness * 0.15))
+    return max(0.5, min(2.0, thickness * 0.25))
 
 
 # ---------------------------------------------------------------------------
@@ -392,10 +392,22 @@ def synthesize_build_source(
     n_cyl = features.get("n_cylinders", 0)
     # Gen-0 template set is intentionally small (plate / hole / fillet / cylinder).
     # Pattern, shell, rib, boss, pocket, loft recovery is the loop's job.
-    if outer_r_p and n_cyl >= 1 and not w_p:
+    if boss_d_p or boss_h_p:
+        template = "boss"
+    elif boss_d_p or boss_h_p:
+        template = "boss"
+    elif rib_h_p or rib_t_p:
+        template = "ribbed"
+    elif wall_p and (w_p or h_p):
+        template = "shell"
+    elif outer_r_p and n_cyl >= 1 and not w_p:
         template = "cylinder"
     elif slot_p:
         template = "slot"
+    elif count_p and hole_p and n_cyl >= 2:
+        template = "pattern"
+    elif pocket_p or cbore_p:
+        template = "pocket"
     elif hole_p and fillet_p:
         template = "plate_hole_fillet"
     elif hole_p:
@@ -715,7 +727,7 @@ def _emit_template(template: str, **kw) -> str:
         "        try:\n"
         f"            return cq.Workplane(\"XY\").box(float({w_e}), float({h_e}), float({t_e}))\n"
         "        except Exception:\n"
-        "            return cq.Workplane(\"XY\").box(40.0, 30.0, 5.0)\n"
+        "            return cq.Workplane(\"XY\").box(45.0, 35.0, 4.0)\n"
     )
     return src
 
