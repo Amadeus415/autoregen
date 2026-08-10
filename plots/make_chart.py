@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -42,7 +43,188 @@ def load_tsv(path: Path):
     return rows
 
 
-def main() -> int:
+def _draw_recursive_cycle(ax) -> None:
+    """Render the actual closed loop used by each benchmark arm."""
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 5)
+    ax.axis("off")
+    boxes = [
+        (0.25, 2.0, "1  Researcher model\nreads prior results"),
+        (2.75, 2.0, "2  One solver.py\nhypothesis + edit"),
+        (5.25, 2.0, "3  Immutable CAD\nevaluation"),
+        (7.75, 2.0, "4  Paired gate\naccept or revert"),
+    ]
+    colors = ["#e8f0fe", "#e6f4ea", "#fef7e0", "#fce8e6"]
+    for (x, y, label), color in zip(boxes, colors):
+        ax.add_patch(
+            plt.Rectangle((x, y), 2.0, 1.0, facecolor=color, edgecolor="#5f6368", linewidth=1.2)
+        )
+        ax.text(x + 1.0, y + 0.5, label, ha="center", va="center", fontsize=8.5)
+    for x in (2.25, 4.75, 7.25):
+        ax.annotate("", xy=(x + 0.45, 2.5), xytext=(x + 0.05, 2.5), arrowprops=dict(arrowstyle="->", lw=1.6))
+    ax.annotate(
+        "accepted solver becomes the next generation",
+        xy=(1.25, 1.95),
+        xytext=(8.75, 1.25),
+        ha="center",
+        fontsize=8.5,
+        color="#1a73e8",
+        arrowprops=dict(arrowstyle="->", lw=2.0, color="#1a73e8", connectionstyle="arc3,rad=-0.32"),
+    )
+    ax.text(
+        5,
+        4.1,
+        "Recursive self-improvement is the feedback path — not a smoothed trend line",
+        ha="center",
+        va="center",
+        fontsize=10,
+        weight="bold",
+    )
+
+
+def plot_benchmark(run_dir: Path, out: Path) -> int:
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"benchmark manifest not found: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text())
+    arms = manifest.get("arms", {})
+    if not arms:
+        raise ValueError("benchmark manifest has no arms")
+
+    fig = plt.figure(figsize=(14.5, 9))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=[4.5, 1.45],
+        height_ratios=[3.2, 1.55],
+        hspace=0.28,
+        wspace=0.08,
+    )
+    ax = fig.add_subplot(grid[0, 0])
+    summary_ax = fig.add_subplot(grid[0, 1])
+    cycle_ax = fig.add_subplot(grid[1, :])
+    summary_ax.axis("off")
+    colors = ["#1a73e8", "#a142f4", "#00897b", "#e37400"]
+
+    summary_lines: list[tuple[str, str, str]] = []
+    max_generation = 0.0
+    for arm_index, (color, (arm_name, summary)) in enumerate(zip(colors, arms.items())):
+        rows = [r for r in load_tsv(run_dir / arm_name / "results.tsv") if r.get("split") == "dev"]
+        if not rows:
+            continue
+        # One canonical baseline plus every candidate generation.
+        baseline = float(summary["baseline_intent_err"])
+        candidates = sorted((r for r in rows if r["gen"] > 0), key=lambda r: r["gen"])
+        gens = np.array([0] + [r["gen"] for r in candidates], dtype=float)
+        max_generation = max(max_generation, float(gens[-1]))
+        errs = np.array([baseline] + [r["intent_err"] for r in candidates], dtype=float)
+        accepted = np.array([1] + [r["accepted"] for r in candidates], dtype=int)
+        frontier = [baseline]
+        current = baseline
+        for row in candidates:
+            if row["accepted"]:
+                current = row["intent_err"]
+            frontier.append(current)
+
+        label = summary.get("label", arm_name)
+        ax.plot(gens, errs, color=color, alpha=0.32, linewidth=1.0)
+        ax.scatter(gens, errs, color=color, alpha=0.55, s=42, label=f"{label} candidates")
+        ax.step(gens, frontier, where="post", color=color, linewidth=2.8, label=f"{label} accepted frontier")
+        rejected = accepted == 0
+        if rejected.any():
+            ax.scatter(gens[rejected], errs[rejected], color=color, marker="x", s=70)
+
+        validation = summary.get("validation", {})
+        final_x = gens[-1] + 0.14 + arm_index * 0.11
+        if "test" in validation:
+            ax.scatter(
+                final_x,
+                validation["test"]["intent_err"],
+                facecolor="#d93025",
+                edgecolor=color,
+                linewidth=2.0,
+                marker="D",
+                s=86,
+                zorder=7,
+            )
+        if "test-ood" in validation:
+            ax.scatter(
+                final_x,
+                validation["test-ood"]["intent_err"],
+                facecolor="#f9ab00",
+                edgecolor=color,
+                linewidth=2.0,
+                marker="s",
+                s=86,
+                zorder=7,
+            )
+        summary_lines.append(
+            (
+                color,
+                label,
+                f"dev  {summary['best_intent_err']:.4f}\n"
+                f"test  {validation.get('test', {}).get('intent_err', float('nan')):.4f}\n"
+                f"OOD  {validation.get('test-ood', {}).get('intent_err', float('nan')):.4f}\n"
+                f"gain  {summary['relative_improvement_pct']:.1f}%\n"
+                f"accepted  {summary['accepted_generations']}/{summary['candidate_generations']}",
+            )
+        )
+
+    settings = manifest.get("settings", {})
+    ax.set_title(
+        "autoregen recursive self-improvement benchmark\n"
+        f"same baseline · {settings.get('dev_tasks', '?')} dev tasks · "
+        f"{settings.get('generations', '?')} bounded generations per model"
+    )
+    ax.set_xlabel("recursive generation (accepted solver feeds the next turn)")
+    ax.set_ylabel("intent_err (lower is better)")
+    ax.grid(True, alpha=0.25)
+    ax.set_ylim(bottom=0)
+    ax.set_xlim(-0.08, max_generation + 0.55)
+    ax.scatter([], [], facecolor="#d93025", edgecolor="#5f6368", marker="D", s=65, label="sealed test")
+    ax.scatter([], [], facecolor="#f9ab00", edgecolor="#5f6368", marker="s", s=65, label="sealed OOD")
+    ax.scatter([], [], color="#5f6368", marker="x", s=55, label="rejected candidate")
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, loc="upper left", fontsize=7.5, framealpha=0.92, ncol=2)
+
+    summary_ax.text(0.02, 0.98, "Validated outcome", va="top", fontsize=12, weight="bold")
+    y = 0.88
+    for color, label, metrics in summary_lines:
+        summary_ax.text(0.02, y, label, va="top", color=color, fontsize=9.5, weight="bold")
+        summary_ax.text(0.05, y - 0.08, metrics, va="top", fontsize=9, family="monospace", linespacing=1.45)
+        y -= 0.39
+    audited = manifest.get("independent_audit", {}).get("pass", False)
+    status = (
+        "AUDITED · VALID"
+        if manifest.get("valid") and audited
+        else ("VALID" if manifest.get("valid") else "INCOMPLETE")
+    )
+    status_color = "#188038" if manifest.get("valid") else "#d93025"
+    summary_ax.text(0.02, 0.045, status, color=status_color, fontsize=11, weight="bold")
+    summary_ax.text(
+        0.02,
+        0.005,
+        "Quick profile; not a general leaderboard.",
+        color="#5f6368",
+        fontsize=7.5,
+    )
+    _draw_recursive_cycle(cycle_ax)
+    fig.suptitle(f"Run {manifest.get('run_id', run_dir.name)}", x=0.99, y=0.995, ha="right", fontsize=8, color="#5f6368")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=170, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Wrote {out} ({len(arms)} model arms)")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--benchmark-run", type=Path, default=None)
+    parser.add_argument("--out", type=Path, default=OUT)
+    args = parser.parse_args(argv)
+    if args.benchmark_run is not None:
+        return plot_benchmark(args.benchmark_run.resolve(), args.out.resolve())
+
     rows = load_tsv(TSV)
     if not rows:
         print("No results.tsv rows yet — nothing to plot")
@@ -51,8 +233,8 @@ def main() -> int:
         ax.set_title("autoregen — intent_err (no data yet)")
         ax.set_xlabel("generation")
         ax.set_ylabel("intent_err (lower is better)")
-        fig.savefig(OUT, dpi=140, bbox_inches="tight")
-        print(f"Wrote {OUT}")
+        fig.savefig(args.out, dpi=140, bbox_inches="tight")
+        print(f"Wrote {args.out}")
         return 0
 
     dev = [r for r in rows if r.get("split", "dev") in ("dev", "") or r.get("note", "").startswith("gen")]
@@ -177,10 +359,10 @@ def main() -> int:
     total_h = sum(r.get("wall_s", 0) for r in loop_rows) / 3600.0
     ax.set_xlabel(f"generation  (cum wall ≈ {total_h:.2f} h)")
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(OUT, dpi=150, bbox_inches="tight")
-    print(f"Wrote {OUT} ({len(loop_rows)} points)")
+    fig.savefig(args.out, dpi=150, bbox_inches="tight")
+    print(f"Wrote {args.out} ({len(loop_rows)} points)")
     return 0
 
 

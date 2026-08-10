@@ -25,3 +25,7 @@ data/manifest.json
 # plots output (keep script)
 plots/chart.png
 plots/__pycache__/
+
+# isolated model-arm benchmark artifacts
+benchmark_runs/
+.benchmark_work/

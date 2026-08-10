@@ -343,6 +343,60 @@ assert_only_solver_dirty() {
       return 1
     fi
   fi
+
+  # Agents may not evade the ownership gate by creating untracked files.
+  # Runtime artifacts are explicit; everything else is a violation.
+  local untracked
+  untracked="$(git ls-files --others --exclude-standard 2>/dev/null \
+    | grep -v -E '^(\.hypothesis\.txt|last_eval\.json|last_gate\.json|best_per_task\.json|noise_floor\.json|violations\.log|test_gen[0-9]+\.json|testood_gen[0-9]+\.json|plots/chart\.png|data/)' \
+    || true)"
+  if [[ -n "$untracked" ]]; then
+    log "VIOLATION: unexpected untracked paths:"
+    echo "$untracked"
+    if [[ -f solver.py.bak ]]; then
+      cp solver.py.bak solver.py
+    fi
+    echo "ownership_violation gen=${GEN:-?} files=$(echo "$untracked" | tr '\n' ',')" >> "$ROOT/violations.log"
+    return 1
+  fi
+  return 0
+}
+
+# Snapshot evaluator-owned mutable state before the external researcher runs.
+# These files are dirty by design, so a simple `git diff HEAD` cannot tell
+# whether the researcher tampered with them during its turn.
+snapshot_evaluator_state() {
+  local snapshot_dir="$1"
+  mkdir -p "$snapshot_dir"
+  local path
+  for path in results.tsv best_per_task.json last_eval.json last_gate.json noise_floor.json violations.log; do
+    if [[ -f "$path" ]]; then
+      cp "$path" "$snapshot_dir/$path"
+      : > "$snapshot_dir/$path.present"
+    fi
+  done
+}
+
+assert_evaluator_state_unchanged() {
+  local snapshot_dir="$1"
+  local changed=""
+  local path
+  for path in results.tsv best_per_task.json last_eval.json last_gate.json noise_floor.json violations.log; do
+    if [[ -f "$snapshot_dir/$path.present" ]]; then
+      if [[ ! -f "$path" ]] || ! cmp -s "$snapshot_dir/$path" "$path"; then
+        changed="${changed}${path},"
+        cp "$snapshot_dir/$path" "$path"
+      fi
+    elif [[ -e "$path" ]]; then
+      changed="${changed}${path},"
+      rm -f "$path"
+    fi
+  done
+  if [[ -n "$changed" ]]; then
+    log "VIOLATION: researcher changed evaluator-owned state: $changed"
+    echo "ownership_violation gen=${GEN:-?} files=$changed" >> "$ROOT/violations.log"
+    return 1
+  fi
   return 0
 }
 
@@ -358,12 +412,21 @@ while (( GEN < MAX_GENS )); do
 
   # snapshot solver for reset
   cp solver.py solver.py.bak
+  STATE_SNAPSHOT="$(mktemp -d "${TMPDIR:-/tmp}/autoregen-state.XXXXXX")"
+  snapshot_evaluator_state "$STATE_SNAPSHOT"
 
   export GEN ROOT
   HYP="$(run_agent "$GEN" | tail -n1)"
   log "Hypothesis: $HYP"
 
-  if ! assert_only_solver_dirty; then
+  STATE_OK=1
+  if ! assert_evaluator_state_unchanged "$STATE_SNAPSHOT"; then
+    STATE_OK=0
+  fi
+  rm -rf "$STATE_SNAPSHOT"
+
+  if [[ "$STATE_OK" -ne 1 ]] || ! assert_only_solver_dirty; then
+    cp solver.py.bak solver.py
     "$PYTHON" - <<PY
 from harness.eval import append_results_tsv
 from pathlib import Path
@@ -377,7 +440,17 @@ append_results_tsv(Path("results.tsv"), {
     "split": "$SPLIT", "n_tasks": 0,
 })
 PY
+    rm -f solver.py.bak
     continue
+  fi
+
+  # Re-check after the researcher turn. Generated task inputs/GT are ignored by
+  # git, so only the content checksum can detect their mutation or deletion.
+  if ! "$PYTHON" prepare.py verify-checksum; then
+    cp solver.py.bak solver.py
+    echo "ownership_violation gen=${GEN:-?} files=checksummed_harness_or_data" >> "$ROOT/violations.log"
+    rm -f solver.py.bak
+    die "Harness or task data changed during researcher turn"
   fi
 
   # if no change, skip

@@ -42,9 +42,9 @@ def harness_paths(repo: Path) -> list:
         repo / "prepare.py",
         repo / "harness",
     ]
-    gt = repo / "data" / "gt"
-    if gt.exists():
-        paths.append(gt)
+    for generated in (repo / "data" / "families", repo / "data" / "gt"):
+        if generated.exists():
+            paths.append(generated)
     return paths
 
 

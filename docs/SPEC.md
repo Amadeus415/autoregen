@@ -1,6 +1,6 @@
 # autoregen — an autoresearch-style recursive improvement loop for parametric CAD
 
-**Status:** design spec, v0.1  
+**Status:** executable core + comparative benchmark, v0.2
 **Analogue:** `karpathy/autoresearch`, with `val_bpb` replaced by a geometric/parametric error metric and `train.py` replaced by `solver.py`.
 
 ---
@@ -128,7 +128,7 @@ autoregen/
 ├── data/
 │   ├── families/     # generated task families, seeded
 │   └── gt/           # sealed ground truth. chmod 000 to the solver's sandbox user.
-├── HARNESS.sha256    # checksum of prepare.py + data/gt, verified every generation
+├── HARNESS.sha256    # checksum of prepare.py + harness + task inputs + data/gt
 └── plots/make_chart.py
 ```
 
@@ -183,6 +183,35 @@ Karpathy's chart is one dot per experiment plus a descending frontier. Match tha
 
 The story the chart tells: dev drops fast, `test` tracks it with a gap, `test-ood` lags — and the interesting research question is whether a better `program.md` closes the OOD gap. That's a much better narrative than a single descending line.
 
+### Implemented recursive-comparison view
+
+`python benchmark_models.py` runs each researcher model from the same solver,
+data seed, harness checksum, and evaluation configuration in an isolated copy.
+Its chart has two evidence layers:
+
+1. **Measured trajectories:** every candidate score, gate-accepted frontier,
+   rejected candidates, and final sealed test/OOD markers for each exact model.
+2. **The causal feedback loop:** prior results → one solver hypothesis/edit →
+   immutable evaluator → paired acceptance gate → accepted solver becomes the
+   next generation's input.
+
+That feedback arrow is the implemented recursive self-improvement claim. A
+descending line alone is not proof: rejected proposals remain visible and only
+accepted state is fed back. The benchmark manifest records exact model IDs,
+baseline hash, settings, per-arm solver hash, violations, and deterministic dev
+rerun delta.
+
+`audit_benchmark.py` then re-scores both saved final solvers outside their model
+workspaces against the root seed-matched dataset. The audit requires the root
+checksum—which covers visible task inputs as well as ground truth—to pass and
+requires all dev/test/OOD scores, task counts, solver hashes, and unchanged-dev
+reruns to match before the chart is labeled **AUDITED · VALID**.
+
+The default 8/4/2 dev/test/OOD profile is an end-to-end validation benchmark,
+not a statistically powered public leaderboard. Comparative model-quality
+claims require a preregistered larger dataset, multiple seeds, and confidence
+intervals over independent runs.
+
 ---
 
 ## 8. Baseline (gen 0)
@@ -204,14 +233,28 @@ If gen-0 scores below ~0.3, the tasks are too easy — turn up the L3 fraction. 
 
 **Phase 2 — the loop (≈3 days + overnight runs).** `program.md`, `loop.sh`, the ratchet, statistical gate, violation logging. Deliverable: the first 200-generation overnight run and a real chart. This is the tweetable artifact.
 
-**Phase 3 — the recursive part (the actual research).** Karpathy left the human in charge of `program.md`. Close that loop:
+**Implemented researcher-arm benchmark.** `benchmark_models.py` binds real CLI
+researchers to Phase 2, gives every arm an identical start, preserves raw logs
+and solver artifacts, reruns dev for determinism, evaluates sealed test/OOD, and
+renders the recursive comparison chart. This tests which model is the better
+bounded autonomous engineer without giving either model authority over the
+harness or acceptance gate.
+
+**Phase 3 — nested meta-improvement (future research).** The implemented inner
+loop recursively improves `solver.py`. Karpathy left the human in charge of
+`program.md`; this optional, much more expensive phase would close a second
+loop around the research instructions themselves:
 
 - **Inner loop:** agent edits `solver.py`, scored on `intent_err`.
 - **Outer loop:** a second agent edits `program.md`, scored on **`Δintent_err` per wall-clock hour achieved by an N=40-generation inner run**, on a fresh dev resample each time.
 
-This is genuinely recursive — the system is improving the thing that improves the thing. It's also where the failure modes get interesting (outer loop learns to write a `program.md` that games the inner metric; outer-loop evaluation is brutally expensive at ~2 hours per data point; and the outer signal is far noisier than the inner one). Budget for a mostly-negative result and write it up honestly. Even a null result here is a better blog post than another descending line.
+This is meta-improvement—the system improves the thing that drives the existing
+recursive solver loop. Its failure modes are sharper: the outer loop may write
+a `program.md` that games the inner metric, one outer data point costs roughly
+two hours, and the outer signal is much noisier. Budget for a mostly-negative
+result and write it up honestly.
 
-**Phase 4 — make it a community benchmark.** L3 families, `test-real` slice, `autoregen submit` producing a signed run manifest (harness checksum, model, cost, seeds, full `results.tsv`), a leaderboard ranked on sealed `test-ood`, and a "researcher arm" comparison — same `program.md`, different driving models — which turns the repo into a live eval of *which model is the better autonomous engineer*. That comparison is what people actually came for.
+**Phase 4 — make it a community benchmark.** L3 families, `test-real` slice, `autoregen submit` producing a signed run manifest (harness checksum, model, cost, seeds, full `results.tsv`), and a statistically powered leaderboard ranked on sealed `test-ood`. The local researcher-arm comparison is implemented; community submission, multiple-seed ranking, and leaderboard infrastructure remain future work.
 
 ---
 

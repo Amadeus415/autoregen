@@ -66,7 +66,7 @@ solver.py         # THE ONLY FILE THE AGENT EDITS
 program.md        # Human research directions (read-only to the agent)
 loop.sh           # Ratchet: verify → edit → eval → gate → commit|reset
 results.tsv       # Append-only experiment log
-HARNESS.sha256    # Checksum of prepare.py + harness/ + data/gt
+HARNESS.sha256    # Checksum of prepare.py + harness/ + task inputs + data/gt
 data/families/    # Task inputs (STEP, params.json, budget)
 data/gt/          # Sealed ground-truth programs (sandbox-blocked)
 plots/make_chart.py
@@ -75,7 +75,7 @@ plots/make_chart.py
 ## Ownership rules
 
 - Agent may edit `solver.py` only. `loop.sh` checks `git diff --name-only`.
-- `HARNESS.sha256` verified every generation; mismatch → hard stop.
+- `HARNESS.sha256` covers code, visible task inputs, and GT; mismatch → hard stop.
 - Solver subprocess: no network, no `data/gt/` reads, static AST checks.
 - Violations append to `results.tsv` / `violations.log` — never silent.
 
@@ -114,6 +114,48 @@ Target band: `intent_err ≈ 0.55–0.70`. Below ~0.3 → tasks too easy; above 
 - Red / orange — sealed `test` / `test-ood` every 25 gens  
 - Shaded band — measured noise floor  
 
+For a same-start model comparison, `benchmark_models.py` produces a second,
+data-driven view: each model's candidate points and accepted frontier, sealed
+test/OOD markers, plus the actual feedback cycle that makes the run recursive.
+The chart does not infer or smooth improvement: only a gate-accepted solver is
+fed into the next generation.
+
+## Reproducible model-arm benchmark
+
+```bash
+# Preflight the isolated baseline without calling either model
+python benchmark_models.py --preflight-only
+
+# Three recursive generations per arm, then dev determinism + sealed test/OOD
+python benchmark_models.py --generations 3 --workers 4
+```
+
+The built-in arms are pinned to:
+
+- Antigravity CLI: `gemini-3.6-flash-high`, high effort, edit-accepting mode
+- Grok CLI: `grok-4.5`, high reasoning, no subagents, through the pinned wrapper
+
+Each arm starts from the same historical baseline solver, current immutable
+harness, seed 42 quick dataset, and evaluation settings. Work happens in
+isolated disposable repositories. The durable run contains a manifest, raw
+per-arm TSVs, final solvers, CLI logs, deterministic dev reruns, sealed test and
+OOD reports, and `chart.png` under `benchmark_runs/<run-id>/`.
+
+After a run, independently re-score its saved solvers on the root dataset:
+
+```bash
+python audit_benchmark.py benchmark_runs/<run-id>
+```
+
+The audit requires the root harness checksum (including visible task inputs and
+GT) to pass, repeats dev for determinism, and requires every dev/test/OOD score
+and solver hash to match the isolated run before marking the report audited.
+
+The default is deliberately a **quick comparative profile** (8 dev / 4 test /
+2 OOD tasks) suitable for validating the end-to-end claim. It demonstrates the
+mechanism; it is not enough evidence for a general model leaderboard. Publish a
+winner only after a preregistered larger multi-seed run.
+
 ## Driving with a real agent
 
 ```bash
@@ -138,8 +180,9 @@ Without `AGENT_CMD`, `loop.sh` runs a **built-in mutation agent** (hyperparamete
 
 - [x] Phase 1 — harness, generator L1–L3 + OOD, scorer, sandbox, baseline, chart  
 - [x] Phase 2 — `loop.sh`, ratchet, bootstrap gate, violation log  
-- [ ] Phase 3 — outer loop on `program.md` (`Δintent_err` / hour)  
-- [ ] Phase 4 — community submit, leaderboard on sealed `test-ood`  
+- [x] Researcher-arm comparison — isolated same-start CLI runs + validation chart
+- [ ] Phase 3 — nested outer loop on `program.md` (`Δintent_err` / hour)
+- [ ] Phase 4 — community submit and statistically powered leaderboard
 
 ## License
 

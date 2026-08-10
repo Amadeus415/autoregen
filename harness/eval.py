@@ -303,9 +303,16 @@ def sha256_tree(paths: Sequence[Path]) -> str:
         elif p.is_dir():
             for root, _, fnames in os.walk(p):
                 for fn in fnames:
-                    files.append(Path(root) / fn)
-    for fp in sorted(files, key=lambda x: str(x.resolve())):
-        rel = str(fp.resolve())
+                    candidate = Path(root) / fn
+                    if "__pycache__" in candidate.parts or candidate.suffix in {".pyc", ".pyo"}:
+                        continue
+                    files.append(candidate)
+    resolved = [fp.resolve() for fp in files]
+    # Hash repository-relative identities, not machine-specific absolute paths.
+    # Otherwise an unchanged harness fails verification in every worktree/copy.
+    common = Path(os.path.commonpath([str(fp.parent) for fp in resolved])) if resolved else Path(".")
+    for fp in sorted(resolved, key=lambda x: str(x.relative_to(common))):
+        rel = fp.relative_to(common).as_posix()
         h.update(rel.encode())
         h.update(b"\0")
         h.update(sha256_file(fp).encode())

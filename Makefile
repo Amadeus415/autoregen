@@ -1,4 +1,4 @@
-.PHONY: setup quick gen0 loop chart full-data verify
+.PHONY: setup quick gen0 loop chart benchmark benchmark-audit benchmark-preflight full-data verify
 
 PYTHON ?= .venv/bin/python
 
@@ -23,6 +23,15 @@ loop:
 
 chart:
 	$(PYTHON) plots/make_chart.py
+
+benchmark-preflight:
+	$(PYTHON) benchmark_models.py --preflight-only
+
+benchmark:
+	$(PYTHON) benchmark_models.py --generations $${GENERATIONS:-3} --workers $${WORKERS:-4}
+
+benchmark-audit:
+	test -n "$${RUN}" && $(PYTHON) audit_benchmark.py "$${RUN}"
 
 verify:
 	$(PYTHON) prepare.py verify-checksum
