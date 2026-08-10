@@ -1,0 +1,2 @@
+gen	sha	intent_err	shape_err	gen_err	robust_err	parsimony_pen	wall_s	tokens	usd	accepted	note	violations	split	n_tasks
+0	8300d2ac1366	0.405055	0.509938	0.503504	0.000000	0.000000	52.47	0	0.0	1	gen0-baseline		dev	8

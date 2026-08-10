@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+# runtime artifacts
+last_eval.json
+last_gate.json
+best_per_task.json
+noise_floor.json
+.hypothesis.txt
+solver.py.bak
+violations.log
+test_gen*.json
+testood_gen*.json
+
+# large generated data (regenerate with prepare.py generate)
+data/families/
+data/gt/
+data/manifest.json
+
+# plots output (keep script)
+plots/chart.png
+plots/__pycache__/
