@@ -1,346 +1,644 @@
 #!/usr/bin/env python3
-"""
-prepare.py — IMMUTABLE harness entry point for autoregen.
+"""Immutable CAD eval + ratchet.
 
-Family generator, splits, scorer, sandbox, results logging, checksums.
-The agent may NOT edit this file. Ownership enforced by loop.sh + HARNESS.sha256.
+Three artifacts matter:
 
-Usage:
-  python prepare.py generate [--quick] [--seed 42]
-  python prepare.py eval --split dev [--workers 4] [--max-tasks N]
-  python prepare.py checksum [--write]
-  python prepare.py verify-checksum
-  python prepare.py gen0 [--quick]
-  python prepare.py noise-floor [--split dev]
+  prepare.py   this file — generate tasks, score solvers, run the loop
+  solver.py    the only file the agent may edit
+  program.md   human-written research brief
+
+Metric: intent_err = mean shape error over {observed} ∪ {held-out members}.
+shape_err is ½ relative volume error + ½ mean relative bbox-extent error.
+Lower is better. Same solver twice → same number.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
+import time
+import traceback
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO_ROOT))
-
-from harness.generator import generate_all
-from harness.eval import (
-    evaluate,
-    append_results_tsv,
-    sha256_file,
-    sha256_tree,
-    load_per_task_intent,
-    RESULTS_HEADER,
-)
-from harness.scorer import paired_bootstrap_gate
+from hidden_eval import BUILDERS, FAMILIES
 
 
-def harness_paths(repo: Path) -> list:
-    """Files covered by HARNESS.sha256."""
-    paths = [
-        repo / "prepare.py",
-        repo / "harness",
-    ]
-    for generated in (repo / "data" / "families", repo / "data" / "gt"):
-        if generated.exists():
-            paths.append(generated)
-    return paths
+# ---------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------
+
+def _cq():
+    import cadquery as cq
+
+    return cq
 
 
-def cmd_generate(args: argparse.Namespace) -> int:
-    data_root = REPO_ROOT / "data"
-    sizes = None
-    if args.quick:
-        sizes = {"train": 12, "dev": 8, "test": 4, "test-ood": 2}
-    elif args.sizes:
-        # e.g. train:32,dev:8,test:8,test-ood:4
-        sizes = {}
-        for part in args.sizes.split(","):
-            k, v = part.split(":")
-            sizes[k.strip()] = int(v)
-    counts = generate_all(data_root, seed=args.seed, sizes=sizes, quick=args.quick)
-    print(json.dumps(counts, indent=2))
-    return 0
+def _as_solid(obj):
+    if obj is None:
+        raise ValueError("build() returned None")
+    if hasattr(obj, "val"):
+        obj = obj.val()
+    return obj
 
 
-def cmd_eval(args: argparse.Namespace) -> int:
-    result = evaluate(
-        REPO_ROOT,
-        split=args.split,
-        solver_path=REPO_ROOT / "solver.py",
-        workers=args.workers,
-        resolution=args.resolution,
-        n_points=args.n_points,
-        robust_n=args.robust_n,
-        seed=args.seed,
-        max_tasks=args.max_tasks,
-        wall_clock_cap_s=args.wall_cap,
-        solver_timeout=args.solver_timeout,
-        verbose=not args.quiet,
-    )
-    out_path = Path(args.out) if args.out else REPO_ROOT / "last_eval.json"
-    out_path.write_text(json.dumps(result, indent=2))
-    print(f"Wrote {out_path}")
-    print(f"intent_err={result.get('intent_err', 1.0):.6f}")
+def _props(solid) -> tuple[float, tuple[float, float, float]]:
+    solid = _as_solid(solid)
+    volume = float(solid.Volume())
+    bb = solid.BoundingBox()
+    return volume, (float(bb.xlen), float(bb.ylen), float(bb.zlen))
 
-    if args.append_tsv:
-        agg = result.get("aggregate", {})
-        append_results_tsv(
-            REPO_ROOT / "results.tsv",
-            {
-                "gen": args.gen,
-                "sha": result.get("solver_sha", ""),
-                "intent_err": result.get("intent_err", 1.0),
-                "shape_err": agg.get("shape_err", 1.0),
-                "gen_err": agg.get("gen_err", 1.0),
-                "robust_err": agg.get("robust_err", 1.0),
-                "parsimony_pen": agg.get("parsimony_pen", 1.0),
-                "wall_s": result.get("wall_s", 0.0),
-                "tokens": 0,
-                "usd": 0.0,
-                "accepted": args.accepted,
-                "note": args.note or f"eval:{args.split}",
-                "violations": ";".join(result.get("violations", [])[:5]),
-                "split": args.split,
-                "n_tasks": result.get("n_tasks", 0),
-            },
+
+def shape_err(pred, gt) -> float:
+    """Volume + bbox extents. Crash / empty → 1.0."""
+    try:
+        pv, pe = _props(pred)
+        gv, ge = _props(gt)
+    except Exception:
+        return 1.0
+    if gv <= 1e-12 or pv <= 1e-12:
+        return 1.0
+    vol_term = abs(pv - gv) / gv
+    bbox_term = sum(abs(a - b) / max(b, 1e-9) for a, b in zip(pe, ge)) / 3.0
+    return min(1.0, 0.5 * vol_term + 0.5 * bbox_term)
+
+
+def _task_id(family_key: str, seed: int) -> str:
+    digest = hashlib.sha256(f"autoregen-v1|{seed}|{family_key}".encode()).hexdigest()
+    return f"t_{digest[:8]}"
+
+
+def _export_step(solid, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _cq().exporters.export(_as_solid(solid), str(path))
+
+
+def generate_dataset(root: Path, seed: int = 0) -> list[str]:
+    """Write data/tasks (visible) and data/hidden (evaluator only)."""
+    root = Path(root)
+    tasks_dir = root / "data" / "tasks"
+    hidden_dir = root / "data" / "hidden"
+    if (root / "data").exists():
+        shutil.rmtree(root / "data")
+    tasks_dir.mkdir(parents=True)
+    hidden_dir.mkdir(parents=True)
+    ids: list[str] = []
+    for family in FAMILIES:
+        tid = _task_id(family["key"], seed)
+        ids.append(tid)
+        observed = family["observed"]
+        solid = family["build"](observed)
+        task_dir = tasks_dir / tid
+        task_dir.mkdir()
+        _export_step(solid, task_dir / "target.step")
+        (task_dir / "params.json").write_text(
+            json.dumps(
+                {
+                    "names": list(family["names"]),
+                    "types": {n: "length" for n in family["names"]},
+                    "ranges": family["ranges"],
+                },
+                indent=2,
+            )
+            + "\n"
         )
-    return 0 if result.get("ok") else 1
+        spec = {
+            "family": family["key"],
+            "observed": observed,
+            "heldout": family["heldout"],
+        }
+        dest = hidden_dir / tid
+        dest.mkdir()
+        (dest / "spec.json").write_text(json.dumps(spec, indent=2) + "\n")
+    return ids
 
 
-def cmd_checksum(args: argparse.Namespace) -> int:
-    digest = sha256_tree(harness_paths(REPO_ROOT))
-    print(digest)
-    if args.write:
-        out = REPO_ROOT / "HARNESS.sha256"
-        out.write_text(digest + "\n")
-        print(f"Wrote {out}")
-    return 0
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Score:
+    intent_err: float
+    per_task: dict[str, float]
+    n_tasks: int
+    n_members: int
 
 
-def cmd_verify_checksum(args: argparse.Namespace) -> int:
-    path = REPO_ROOT / "HARNESS.sha256"
+def solver_sha(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+
+
+def _load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _members(spec: dict, which: str) -> list[dict]:
+    observed = [spec["observed"]]
+    heldout = list(spec["heldout"])
+    if which == "observed":
+        return observed
+    if which == "heldout":
+        return heldout
+    if which == "all":
+        return observed + heldout
+    raise ValueError(f"unknown members={which!r}")
+
+
+def _run_build(source: str, params: dict):
+    ns: dict = {}
+    exec(compile(source, "<build>", "exec"), ns, ns)
+    if "build" not in ns:
+        raise RuntimeError("emitted module has no build()")
+    return ns["build"](**params)
+
+
+def score_solver(solver_path: Path, data_root: Path, *, members: str = "all") -> Score:
+    """Score a solver. members='all' is the official metric."""
+    solver_path = Path(solver_path)
+    data_root = Path(data_root)
+    tasks = sorted((data_root / "data" / "tasks").iterdir())
+    if not tasks:
+        raise FileNotFoundError(f"no tasks under {data_root}/data/tasks")
+
+    try:
+        solver = _load_module(solver_path, f"solver_{solver_sha(solver_path)}")
+        solve = solver.solve
+    except Exception:
+        ids = [p.name for p in tasks]
+        return Score(1.0, {i: 1.0 for i in ids}, len(ids), 0)
+
+    per_task: dict[str, float] = {}
+    n_members = 0
+    for task_dir in tasks:
+        spec_path = data_root / "data" / "hidden" / task_dir.name / "spec.json"
+        spec = json.loads(spec_path.read_text())
+        builder = BUILDERS[spec["family"]]
+        vectors = _members(spec, members)
+        n_members = len(vectors)
+        try:
+            source = solve(str(task_dir))
+        except Exception:
+            per_task[task_dir.name] = 1.0
+            continue
+        errs: list[float] = []
+        for params in vectors:
+            try:
+                pred = _run_build(source, params)
+                gt = builder(params)
+                errs.append(shape_err(pred, gt))
+            except Exception:
+                errs.append(1.0)
+        per_task[task_dir.name] = round(sum(errs) / len(errs), 8)
+
+    intent = round(sum(per_task.values()) / len(per_task), 8)
+    return Score(intent, per_task, len(per_task), n_members)
+
+
+# ---------------------------------------------------------------------------
+# Log
+# ---------------------------------------------------------------------------
+
+LOG_HEADER = "gen\tstart_sha\tsolver_sha\tintent_err\tstatus\thypothesis\n"
+
+
+@dataclass(frozen=True)
+class Row:
+    gen: int
+    start_sha: str
+    solver_sha: str
+    intent_err: float
+    status: str
+    hypothesis: str
+
+
+def parse_log(path: Path) -> list[Row]:
+    rows: list[Row] = []
+    text = Path(path).read_text()
+    for line in text.splitlines()[1:]:
+        if not line.strip():
+            continue
+        gen, start, sha, err, status, hyp = line.split("\t", 5)
+        rows.append(
+            Row(int(gen), start, sha, float(err), status, hyp)
+        )
+    return rows
+
+
+def _append_row(path: Path, row: Row) -> None:
+    path = Path(path)
     if not path.exists():
-        print("HARNESS.sha256 missing — run: python prepare.py checksum --write", file=sys.stderr)
-        return 2
-    expected = path.read_text().strip().split()[0]
-    actual = sha256_tree(harness_paths(REPO_ROOT))
-    if expected != actual:
-        print(f"HARNESS CHECKSUM MISMATCH\nexpected: {expected}\nactual:   {actual}", file=sys.stderr)
-        return 1
-    print("HARNESS.sha256 OK")
-    return 0
-
-
-def cmd_gen0(args: argparse.Namespace) -> int:
-    """Run baseline solver twice and confirm determinism."""
-    # ensure data exists
-    dev = REPO_ROOT / "data" / "families" / "dev"
-    if not dev.exists() or not any(dev.iterdir()):
-        print("No dev data — generating quick set...")
-        generate_all(
-            REPO_ROOT / "data",
-            seed=args.seed,
-            sizes={"train": 8, "dev": min(args.max_tasks or 4, 8), "test": 2, "test-ood": 2}
-            if args.quick
-            else None,
-            quick=args.quick,
+        path.write_text(LOG_HEADER)
+    with path.open("a") as fh:
+        hyp = row.hypothesis.replace("\t", " ").replace("\n", " ")
+        fh.write(
+            f"{row.gen}\t{row.start_sha}\t{row.solver_sha}\t"
+            f"{row.intent_err:.8f}\t{row.status}\t{hyp}\n"
         )
-        cmd_checksum(argparse.Namespace(write=True))
 
-    kwargs = dict(
-        split="dev",
-        workers=args.workers,
-        resolution=args.resolution,
-        n_points=args.n_points,
-        robust_n=args.robust_n,
-        seed=args.seed,
-        max_tasks=args.max_tasks,
-        wall_clock_cap_s=args.wall_cap,
-        solver_timeout=args.solver_timeout,
-        verbose=True,
+
+def decide(best: float, new: float) -> str:
+    return "keep" if new < best else "discard"
+
+
+# ---------------------------------------------------------------------------
+# Chart
+# ---------------------------------------------------------------------------
+
+def write_chart(log_path: Path, out_path: Path) -> None:
+    rows = parse_log(log_path)
+    if not rows:
+        return
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    gens = [r.gen for r in rows]
+    errs = [r.intent_err for r in rows]
+    fig, ax = plt.subplots(figsize=(8, 4.2))
+    ax.scatter(gens, errs, c="#888888", s=28, zorder=2, label="every step")
+    frontier_x: list[int] = []
+    frontier_y: list[float] = []
+    best = None
+    for row in rows:
+        if row.status == "keep":
+            best = row.intent_err
+            frontier_x.append(row.gen)
+            frontier_y.append(row.intent_err)
+        elif best is not None:
+            frontier_x.append(row.gen)
+            frontier_y.append(best)
+    if frontier_x:
+        ax.step(frontier_x, frontier_y, where="post", color="#1d4ed8", lw=2, label="accepted")
+        ax.scatter(frontier_x[:1], frontier_y[:1], c="#1d4ed8", s=36, zorder=3)
+    ax.set_xlabel("generation")
+    ax.set_ylabel("intent_err  (lower is better)")
+    ax.set_title("design-intent recovery — keep-if-better")
+    ax.grid(True, alpha=0.3)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+
+class LauncherError(RuntimeError):
+    pass
+
+
+def _load_dummy():
+    here = Path(__file__).resolve().parent
+    path = here / "tests" / "dummy_agent.py"
+    if not path.is_file():
+        raise LauncherError(f"dummy agent missing: {path}")
+    return _load_module(path, "dummy_agent").DummyAgent()
+
+
+def _grok_bin() -> str:
+    found = shutil.which("grok")
+    if not found:
+        raise LauncherError("grok CLI not on PATH")
+    return found
+
+
+class GrokAgent:
+    def __init__(self, model: str = "grok-4.6", effort: str = "medium") -> None:
+        self.model = model
+        self.effort = effort
+
+    def propose(self, root: Path) -> str:
+        prompt = (
+            "You are doing ONE research step on a CAD design-intent eval.\n"
+            "Read program.md, solver.py, and the last 40 lines of results.tsv if it exists.\n"
+            "Make exactly one hypothesized improvement to solver.py.\n"
+            "Write one line to .hypothesis.txt describing the change.\n"
+            "Do not edit any other file.\n"
+            "Do not run prepare.py and do not score yourself.\n"
+            "Do not read data/hidden/, hidden_eval.py, tests/, or any directory outside this workspace.\n"
+            "Do not start a loop — you will be invoked again after the harness scores this change.\n"
+            "Finish after the edit.\n"
+        )
+        cmd = [
+            _grok_bin(),
+            "-p",
+            prompt,
+            "--model",
+            self.model,
+            "--reasoning-effort",
+            self.effort,
+            "--yolo",
+            "--max-turns",
+            "25",
+            "--no-subagents",
+            "--cwd",
+            str(root),
+            "--output-format",
+            "plain",
+        ]
+        turn_log = root / "grok-turn.log"
+        try:
+            with turn_log.open("a") as fh:
+                fh.write(f"\n--- turn {time.strftime('%H:%M:%S')} ---\n")
+                fh.flush()
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    cwd=root,
+                    timeout=720,
+                    stdout=fh,
+                    stderr=fh,
+                )
+        except FileNotFoundError as exc:
+            raise LauncherError("grok CLI not executable") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise LauncherError(f"grok turn timed out: {exc}") from exc
+        except subprocess.CalledProcessError as exc:
+            raise LauncherError(f"grok turn failed: {exc}") from exc
+        hyp_path = root / ".hypothesis.txt"
+        if hyp_path.is_file() and hyp_path.read_text().strip():
+            return hyp_path.read_text().strip().splitlines()[0]
+        return f"grok {self.model} {self.effort} edit"
+
+
+# ---------------------------------------------------------------------------
+# Ratchet
+# ---------------------------------------------------------------------------
+
+def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    env = os.environ.copy()
+    env.setdefault("GIT_AUTHOR_NAME", "autoregen")
+    env.setdefault("GIT_AUTHOR_EMAIL", "autoregen@local")
+    env.setdefault("GIT_COMMITTER_NAME", "autoregen")
+    env.setdefault("GIT_COMMITTER_EMAIL", "autoregen@local")
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=check,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    print("=== Gen-0 run 1 ===")
-    r1 = evaluate(REPO_ROOT, **kwargs)
-    print("=== Gen-0 run 2 (determinism check) ===")
-    r2 = evaluate(REPO_ROOT, **kwargs)
 
-    e1, e2 = r1["intent_err"], r2["intent_err"]
-    print(f"run1 intent_err={e1:.6f}")
-    print(f"run2 intent_err={e2:.6f}")
-    # allow tiny float noise
-    if abs(e1 - e2) > 1e-9:
-        # per-task check
-        t1 = {t["family_id"]: t["intent_err"] for t in r1["per_task"]}
-        t2 = {t["family_id"]: t["intent_err"] for t in r2["per_task"]}
-        diffs = [k for k in t1 if abs(t1[k] - t2.get(k, 99)) > 1e-9]
-        print(f"DETERMINISM FAIL: {len(diffs)} tasks differ: {diffs[:5]}", file=sys.stderr)
-        ok = False
+
+def _ensure_git(root: Path) -> None:
+    if (root / ".git").is_dir():
+        return
+    _git(root, "init")
+    _git(root, "add", "solver.py")
+    if (root / "prepare.py").is_file():
+        _git(root, "add", "prepare.py")
+    if (root / "program.md").is_file():
+        _git(root, "add", "program.md")
+    _git(root, "commit", "-m", "baseline")
+
+
+def _enforce_solver_only(root: Path) -> None:
+    diff = _git(root, "diff", "--name-only", check=False).stdout.split()
+    for name in diff:
+        if name != "solver.py":
+            _git(root, "checkout", "--", name, check=False)
+    listed = _git(root, "ls-files", "--others", "--exclude-standard", check=False)
+    allowed = {".hypothesis.txt", "results.tsv", "chart.png"}
+    for name in listed.stdout.split():
+        if name in allowed or name.startswith("data/"):
+            continue
+        path = root / name
+        if path.is_file():
+            path.unlink()
+
+
+def _restore_solver(root: Path) -> None:
+    _git(root, "checkout", "--", "solver.py")
+
+
+def _commit_solver(root: Path, message: str) -> None:
+    _git(root, "add", "solver.py")
+    _git(root, "commit", "-m", message, check=False)
+
+
+def run_loop(
+    root: Path,
+    *,
+    agent: str,
+    gens: int,
+    model: str = "grok-4.6",
+    effort: str = "medium",
+    data_root: Path | None = None,
+) -> Path:
+    """Causal keep-if-better loop. Returns path to results.tsv."""
+    root = Path(root)
+    data_root = Path(data_root or root)
+    if not (data_root / "data" / "tasks").is_dir():
+        generate_dataset(data_root)
+    if not (root / "solver.py").is_file():
+        raise FileNotFoundError(f"no solver.py in {root}")
+    _ensure_git(root)
+    log_path = root / "results.tsv"
+    if log_path.exists():
+        log_path.unlink()
+
+    if agent == "dummy":
+        researcher = _load_dummy()
+    elif agent == "grok":
+        researcher = GrokAgent(model=model, effort=effort)
     else:
-        print("Determinism OK (identical intent_err)")
-        ok = True
+        raise ValueError(f"unknown agent {agent!r}")
 
-    (REPO_ROOT / "last_eval.json").write_text(json.dumps(r1, indent=2))
-    append_results_tsv(
-        REPO_ROOT / "results.tsv",
-        {
-            "gen": 0,
-            "sha": r1.get("solver_sha", ""),
-            "intent_err": e1,
-            "shape_err": r1["aggregate"]["shape_err"],
-            "gen_err": r1["aggregate"]["gen_err"],
-            "robust_err": r1["aggregate"]["robust_err"],
-            "parsimony_pen": r1["aggregate"]["parsimony_pen"],
-            "wall_s": r1["wall_s"],
-            "tokens": 0,
-            "usd": 0.0,
-            "accepted": 1,
-            "note": "gen0-baseline",
-            "violations": "",
-            "split": "dev",
-            "n_tasks": r1["n_tasks"],
-        },
+    solver = root / "solver.py"
+    scored = score_solver(solver, data_root)
+    start = solver_sha(solver)
+    _append_row(
+        log_path,
+        Row(0, start, start, scored.intent_err, "keep", "baseline"),
     )
-    # also dump per-task for bootstrap baseline
-    (REPO_ROOT / "best_per_task.json").write_text(
-        json.dumps(
-            {
-                "intent_err": e1,
-                "per_task": r1["per_task"],
-                "solver_sha": r1.get("solver_sha"),
-            },
-            indent=2,
+    best = scored.intent_err
+    accepted = start
+    print(f"gen\t0\t{scored.intent_err:.8f}\tkeep\tbaseline", flush=True)
+
+    for gen in range(1, gens + 1):
+        start_sha = solver_sha(solver)
+        if start_sha != accepted:
+            raise RuntimeError(
+                f"causal break at gen {gen}: solver {start_sha} != accepted {accepted}"
+            )
+        status = "keep"
+        hypothesis = ""
+        try:
+            hypothesis = researcher.propose(root)
+            _enforce_solver_only(root)
+            try:
+                probe = _load_module(solver, f"probe_{gen}")
+                if not hasattr(probe, "solve"):
+                    raise AttributeError("solve")
+                crashed = False
+            except Exception:
+                crashed = True
+            candidate = score_solver(solver, data_root)
+            if crashed:
+                status = "crash"
+                err = 1.0
+                sha = solver_sha(solver)
+                _restore_solver(root)
+            else:
+                err = candidate.intent_err
+                sha = solver_sha(solver)
+                status = decide(best, err)
+                if status == "keep":
+                    best = err
+                    accepted = sha
+                    _commit_solver(root, f"gen {gen}: {hypothesis}")
+                else:
+                    _restore_solver(root)
+        except LauncherError:
+            raise
+        except Exception:
+            status = "crash"
+            err = 1.0
+            sha = solver_sha(solver)
+            hypothesis = hypothesis or traceback.format_exc().splitlines()[-1]
+            _restore_solver(root)
+
+        _append_row(
+            log_path,
+            Row(gen, start_sha, sha, err, status, hypothesis or status),
         )
-    )
-    return 0 if ok else 1
-
-
-def cmd_gate(args: argparse.Namespace) -> int:
-    """Compare new eval vs best_per_task.json with paired bootstrap gate."""
-    new = json.loads(Path(args.new_eval).read_text())
-    best = json.loads(Path(args.best).read_text())
-    old_scores = [t["intent_err"] for t in best["per_task"]]
-    new_scores = [t["intent_err"] for t in new["per_task"]]
-    # align by family_id
-    old_map = {t["family_id"]: t["intent_err"] for t in best["per_task"]}
-    new_map = {t["family_id"]: t["intent_err"] for t in new["per_task"]}
-    ids = sorted(set(old_map) & set(new_map))
-    old_scores = [old_map[i] for i in ids]
-    new_scores = [new_map[i] for i in ids]
-    gate = paired_bootstrap_gate(old_scores, new_scores, n_boot=args.n_boot, seed=args.seed)
-    print(json.dumps(gate, indent=2))
-    Path(args.out).write_text(json.dumps(gate, indent=2)) if args.out else None
-    return 0 if gate["accept"] else 1
-
-
-def cmd_noise_floor(args: argparse.Namespace) -> int:
-    """Re-run current solver N times; report spread."""
-    runs = []
-    for i in range(args.n):
-        print(f"=== Noise floor run {i+1}/{args.n} ===")
-        r = evaluate(
-            REPO_ROOT,
-            split=args.split,
-            workers=args.workers,
-            resolution=args.resolution,
-            n_points=args.n_points,
-            robust_n=args.robust_n,
-            seed=args.seed,  # same seed — should be identical if deterministic
-            max_tasks=args.max_tasks,
-            verbose=True,
+        print(
+            f"gen\t{gen}\t{err:.8f}\t{status}\t{hypothesis}",
+            flush=True,
         )
-        runs.append(r["intent_err"])
-    import numpy as np
 
-    arr = np.array(runs)
-    report = {
-        "n": len(runs),
-        "mean": float(arr.mean()),
-        "std": float(arr.std()),
-        "min": float(arr.min()),
-        "max": float(arr.max()),
-        "runs": runs,
-    }
-    print(json.dumps(report, indent=2))
-    (REPO_ROOT / "noise_floor.json").write_text(json.dumps(report, indent=2))
-    return 0
+    write_chart(log_path, root / "chart.png")
+    return log_path
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="autoregen immutable harness")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    g = sub.add_parser("generate", help="Synthesize task families")
-    g.add_argument("--seed", type=int, default=42)
-    g.add_argument("--quick", action="store_true", help="Tiny dataset for smoke tests")
-    g.add_argument("--sizes", type=str, default=None, help="train:N,dev:N,...")
-    g.set_defaults(func=cmd_generate)
-
-    e = sub.add_parser("eval", help="Evaluate solver.py on a split")
-    e.add_argument("--split", default="dev")
-    e.add_argument("--workers", type=int, default=4)
-    e.add_argument("--resolution", type=int, default=64)
-    e.add_argument("--n-points", type=int, default=8000)
-    e.add_argument("--robust-n", type=int, default=12)
-    e.add_argument("--seed", type=int, default=0)
-    e.add_argument("--max-tasks", type=int, default=None)
-    e.add_argument("--wall-cap", type=float, default=None)
-    e.add_argument("--solver-timeout", type=float, default=90.0)
-    e.add_argument("--out", type=str, default=None)
-    e.add_argument("--append-tsv", action="store_true")
-    e.add_argument("--gen", type=int, default=-1)
-    e.add_argument("--accepted", type=int, default=0)
-    e.add_argument("--note", type=str, default="")
-    e.add_argument("--quiet", action="store_true")
-    e.set_defaults(func=cmd_eval)
-
-    c = sub.add_parser("checksum", help="Compute harness checksum")
-    c.add_argument("--write", action="store_true")
-    c.set_defaults(func=cmd_checksum)
-
-    v = sub.add_parser("verify-checksum", help="Verify HARNESS.sha256")
-    v.set_defaults(func=cmd_verify_checksum)
-
-    z = sub.add_parser("gen0", help="Run baseline twice; check determinism")
-    z.add_argument("--quick", action="store_true")
-    z.add_argument("--workers", type=int, default=2)
-    z.add_argument("--resolution", type=int, default=64)
-    z.add_argument("--n-points", type=int, default=8000)
-    z.add_argument("--robust-n", type=int, default=8)
-    z.add_argument("--seed", type=int, default=0)
-    z.add_argument("--max-tasks", type=int, default=None)
-    z.add_argument("--wall-cap", type=float, default=None)
-    z.add_argument("--solver-timeout", type=float, default=90.0)
-    z.set_defaults(func=cmd_gen0)
-
-    gate = sub.add_parser("gate", help="Paired bootstrap statistical gate")
-    gate.add_argument("--new-eval", required=True)
-    gate.add_argument("--best", default=str(REPO_ROOT / "best_per_task.json"))
-    gate.add_argument("--n-boot", type=int, default=2000)
-    gate.add_argument("--seed", type=int, default=0)
-    gate.add_argument("--out", type=str, default=None)
-    gate.set_defaults(func=cmd_gate)
-
-    nf = sub.add_parser("noise-floor", help="Measure score spread of unchanged solver")
-    nf.add_argument("--n", type=int, default=3)
-    nf.add_argument("--split", default="dev")
-    nf.add_argument("--workers", type=int, default=2)
-    nf.add_argument("--resolution", type=int, default=64)
-    nf.add_argument("--n-points", type=int, default=8000)
-    nf.add_argument("--robust-n", type=int, default=8)
-    nf.add_argument("--seed", type=int, default=0)
-    nf.add_argument("--max-tasks", type=int, default=None)
-    nf.set_defaults(func=cmd_noise_floor)
-
-    return p
+def _prepare_workdir(src: Path, dest: Path, _agent: str) -> tuple[Path, Path]:
+    """Agent workspace: solver + brief + visible tasks. GT stays in *.sealed."""
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src / "solver.py", dest / "solver.py")
+    shutil.copy2(src / "program.md", dest / "program.md")
+    sealed = dest.parent / f"{dest.name}.sealed"
+    generate_dataset(sealed)
+    tasks_src = sealed / "data" / "tasks"
+    tasks_dst = dest / "data" / "tasks"
+    if tasks_dst.exists():
+        shutil.rmtree(tasks_dst)
+    shutil.copytree(tasks_src, tasks_dst)
+    return dest, sealed
 
 
-def main(argv=None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.func(args)
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _print_kv(**kwargs) -> None:
+    for key, value in kwargs.items():
+        print(f"{key}\t{value}", flush=True)
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="autoregen — Karpathy-style CAD eval")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    g = sub.add_parser("generate", help="write the synthetic task set")
+    g.add_argument("--root", type=Path, default=Path("."))
+    g.add_argument("--seed", type=int, default=0)
+
+    s = sub.add_parser("score", help="score a solver")
+    s.add_argument("--root", type=Path, default=Path("."))
+    s.add_argument("--solver", type=Path, default=Path("solver.py"))
+    s.add_argument("--members", choices=("all", "observed", "heldout"), default="all")
+
+    lp = sub.add_parser("loop", help="causal keep-if-better loop")
+    lp.add_argument("--agent", choices=("dummy", "grok"), required=True)
+    lp.add_argument("--gens", type=int, default=10)
+    lp.add_argument("--root", type=Path, default=None)
+    lp.add_argument("--workdir", type=Path, default=None)
+    lp.add_argument("--model", default="grok-4.6")
+    lp.add_argument("--effort", default="medium")
+
+    c = sub.add_parser("chart", help="draw the frontier from a log")
+    c.add_argument("--log", type=Path, default=Path("results.tsv"))
+    c.add_argument("--out", type=Path, default=Path("chart.png"))
+
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.cmd == "generate":
+        ids = generate_dataset(args.root, seed=args.seed)
+        _print_kv(tasks=len(ids), root=args.root.resolve())
+        return 0
+
+    if args.cmd == "score":
+        root = args.root.resolve()
+        if not (root / "data" / "tasks").is_dir():
+            generate_dataset(root)
+        scored = score_solver(args.solver, root, members=args.members)
+        _print_kv(
+            intent_err=f"{scored.intent_err:.8f}",
+            n_tasks=scored.n_tasks,
+            n_members=scored.n_members,
+        )
+        return 0
+
+    if args.cmd == "loop":
+        src = Path.cwd()
+        data_root = None
+        if args.workdir is not None:
+            root, data_root = _prepare_workdir(src, args.workdir.resolve(), args.agent)
+        else:
+            root = (args.root or src).resolve()
+            if not (root / "data" / "tasks").is_dir():
+                generate_dataset(root)
+        started = time.time()
+        try:
+            log_path = run_loop(
+                root,
+                agent=args.agent,
+                gens=args.gens,
+                model=args.model,
+                effort=args.effort,
+                data_root=data_root,
+            )
+        except LauncherError as exc:
+            print(f"launcher_error\t{exc}", file=sys.stderr)
+            return 2
+        rows = parse_log(log_path)
+        keeps = [r for r in rows if r.status == "keep"]
+        frontier = keeps[-1].intent_err if keeps else rows[-1].intent_err
+        _print_kv(
+            intent_err=f"{frontier:.8f}",
+            steps=max(0, len(rows) - 1),
+            accepted=max(0, len(keeps) - 1),
+            log=str(log_path.resolve()),
+            seconds=f"{time.time() - started:.1f}",
+        )
+        return 0
+
+    if args.cmd == "chart":
+        write_chart(args.log, args.out)
+        _print_kv(chart=args.out.resolve())
+        return 0
+
+    return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

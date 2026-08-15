@@ -1,85 +1,74 @@
-# program.md — research directions for autoregen
+# program.md — research brief
 
-**Human-written.** The agent may read this file. The agent may **not** edit it
-(enforced by `loop.sh` ownership rules). In Phase 3 an outer loop may edit it;
-for v0 it is frozen.
+Human-written. Read this. Do not edit it.
 
 ## Goal
 
-Minimize mean `intent_err` on the sealed-from-solver `dev` split. Lower is better.
-`intent_err = 0.35·shape + 0.45·gen + 0.15·robust + 0.05·parsimony`.
+Recover **design intent**, not one solid.
 
-Generalization (`gen_err` on held-out parameter vectors) outweighs shape match on
-the observed member. Recover **design intent**, not a single solid.
+Each task gives you:
 
-## Ownership rules (mechanical)
+- `data/tasks/<id>/target.step` — one observed member of a parametric family
+- `data/tasks/<id>/params.json` — the **names**, types, and ranges of the driving parameters. **Values are withheld.**
 
-1. Edit **only** `solver.py`. Any other path → violation, revert, log.
-2. Do not read `data/gt/`, `prepare.py` internals, or sealed test splits for training signal.
-3. Do not use network I/O inside `solver.py` or emitted `build()` modules.
-4. `HARNESS.sha256` is re-verified every generation. Mismatch → hard stop.
-
-## Solver contract
+`solve(task_dir)` must return Python source that defines:
 
 ```python
-def solve(task_dir: str) -> str:
-    """Return Python source of a module defining build(**params) -> solid."""
+def build(**params):
+    # return a CadQuery solid
 ```
 
-Inputs in `task_dir`:
+The immutable evaluator in `prepare.py` rebuilds the family at the observed parameter vector **and** at held-out vectors you never saw. The official score is the mean shape error over those members, then the mean over tasks.
 
-- `target.step` — observed B-rep solid
-- `params.json` — parameter **names**, types, units, ranges (values withheld)
-- `budget.json` — wall-clock / token budget
-- `views/*.png` — optional orthographic renders
+```
+intent_err  ∈ [0, 1]   lower is better
+shape_err   = ½ · |Δvolume|/volume_gt  +  ½ · mean |Δextent|/extent_gt
+```
 
-Emitted module must expose `build(...)` with keyword args matching `params.json`
-names, returning a CadQuery workplane/solid. Prefer CadQuery (OpenCascade).
+A crash, timeout, or invalid solid scores 1.0 for that member. Same solver scored twice yields the same number.
 
-## Constraints
+Shape-matching the observed solid and ignoring parameters fails the held-out members. That is the point.
 
-- **Deterministic at v0.** No LLM calls at inference time. Fixed seeds, pure algorithms.
-- Per-member build timeout: 20s. Per-task solve timeout: 90s.
-- Prefer single-body manifold solids with parsimonious face counts.
-- Wrap risky reconstruction in try/except with a parametric bbox fallback so
-  crashes become shape error, not hard zeros.
+## Ownership
 
-## Promising research directions (priority order)
+- Edit **only** `solver.py`.
+- Write one line to `.hypothesis.txt` describing the change.
+- Do not edit `prepare.py`, `program.md`, the log, or anything under `data/`.
+- Do not read `data/hidden/` or `hidden_eval.py` — that is sealed ground truth.
+- Do not leave the workspace or read `tests/`.
+- Do not score yourself. The loop scores you and keeps or discards.
+- No network, no LLM calls inside `solver.py`. Deterministic algorithms only.
 
-1. **Better topology → feature mapping**
-   - Cylinder-axis clustering for hole patterns (linear / polar).
-   - Parallel-plane pairing for extrude direction and thickness.
-   - Fillet/chamfer radius from blend-face curvature, not thickness heuristics.
+## The loop (the harness runs this, not you)
 
-2. **Constraint / dependency inference**
-   - Detect `fillet_r < plate_t/2`, `hole_d < min(w,h)`, pattern pitch feasibility.
-   - Emit clamps in `build()` so robustness sweep passes.
+You are invoked **once per generation**. Each invocation is one hypothesized change.
 
-3. **Template library expansion**
-   - Add shells, counterbores, ribs, bosses, lofts as first-class templates.
-   - Score templates by residual face-type histogram match before emitting.
+1. Read `program.md`, `solver.py`, and the tail of `results.tsv`.
+2. Make one change to `solver.py`.
+3. Stop.
 
-4. **Parameter binding**
-   - Fuzzy name match is weak. Bind by unit + range + feature magnitude.
-   - Solve a small assignment problem: params ↔ inferred dimensions.
+The harness then:
 
-5. **Multi-hypothesis search (within budget)**
-   - Emit K candidate programs, score cheap proxies (volume, face count, bbox)
-     against the observed solid, keep the best — still no GT access.
+4. Scores the new solver with the immutable evaluator.
+5. If `intent_err` is strictly lower, **keep** (git commit).
+6. If it is equal, worse, or the file crashes, **discard** (`git checkout -- solver.py`).
+7. Appends one row to `results.tsv` (`keep` / `discard` / `crash`).
+8. Invokes you again. The next start is the last **accepted** solver plus the full log.
 
-6. **Do not**
-   - Voxel-soup or mesh-soup the observed solid (fails held-out + parsimony).
-   - Hardcode observed geometry ignoring parameters (gen_err ≈ 1).
-   - Read ground truth or edit the harness.
+Rejected edits are not the next start. The cloud of discards is the honest part of the log.
 
-## Metric notes
+## Promising directions
 
-- Observed shape match is table stakes; held-out members are the signal.
-- `robust_err` measures authoring quality under ±15% param noise.
-- `parsimony_pen` punishes face explosion (brute-force CSG soup).
+The baseline emits the observed bounding box and ignores parameters. It is mediocre on purpose.
 
-## Logging
+1. Bind parameter names to the dimensions they name. A `width` that does not drive width is not intent.
+2. Use topology on the observed solid (planes, cylinders, through-holes, bosses) to choose a builder, then let **parameters** drive it.
+3. Prefer a short `build()` that regenerates. A soup of observed numbers will not survive held-out vectors.
+4. One change per generation. Read the log: do not retry a discarded idea verbatim; combine near-misses.
 
-Every generation appends one row to `results.tsv`. Write a one-line hypothesis
-describing the change. Rejected experiments stay in the log — the cloud of
-rejects is the honest part of the chart.
+## Do not
+
+- Hard-code the observed solid.
+- Voxel- or box-soup the target.
+- Put every family you can imagine in dormant `if` branches you are not ready to score — add one hypothesis at a time.
+- Read hidden specs or edit the evaluator.
