@@ -1,0 +1,22 @@
+gen	start_sha	solver_sha	intent_err	status	hypothesis
+0	d1f8d373b583	d1f8d373b583	0.25771421	keep	baseline
+1	d1f8d373b583	a8db95a8ab04	0.04568085	keep	Bind named envelope dims (width/depth/height|thick|plate_t, or radius/outer_r+height) so the solid scales with parameters instead of a frozen bbox.
+2	a8db95a8ab04	f9e5a83d8126	0.04467702	keep	When the only extra param is hole_d, cut a centered through-hole so plate volume tracks hole_d without touching offset/pattern/cbore families.
+3	f9e5a83d8126	987baba1e4a9	0.03780636	keep	When the only extra param on an outer_r+height cylinder is inner_r, cut a centered through-hole of diameter 2*inner_r so the tube volume tracks inner_r.
+4	987baba1e4a9	90deec3b41f5	0.02887683	keep	When the only extras on a width/depth/plate_t box are boss_d and boss_h, extrude a centered cylinder so Z extent and volume track the boss.
+5	90deec3b41f5	fab9703bfe3e	0.02802017	keep	When extras are hole_d+hole_x+hole_y, cut a through-hole offset by hole_x/hole_y so volume and centroid track the offset hole.
+6	fab9703bfe3e	e00fecf1480a	0.01983293	keep	When extras are boss_d+boss_h+boss_x+boss_y, extrude a cylinder offset by boss_x/boss_y so volume, Z extent, and centroid track the offset boss.
+7	e00fecf1480a	8474624c78d8	0.01881548	keep	When extras are hole_d+cbore_d+cbore_h, cut a centered counterbore so plate volume tracks the through-hole and the shallow cbore pocket.
+8	8474624c78d8	b07e3f1f8ce5	0.01835911	keep	When the only extra param on a width/depth/height box is fillet_r, fillet all edges so volume and extents track the blend radius.
+9	b07e3f1f8ce5	ced135ed9ddc	0.01847426	discard	When the only extra param on a width/depth/height box is chamfer, chamfer all edges so volume and extents track the bevel size.
+10	b07e3f1f8ce5	e0595b5d0f69	0.01620454	keep	When extras are slot_l+slot_w, cut a centered through-slot so plate volume tracks the slot length and width.
+11	e0595b5d0f69	738138358ea0	0.01539805	keep	When extras are hole_d+pitch, cut two through-holes on the X-axis at ±pitch/2 so plate volume tracks a two-hole pattern instead of a single centered hole.
+12	738138358ea0	820f93724282	0.01512218	keep	When the only extra param on a width/depth/height box is chamfer, chamfer only the top-face edges so volume and Z-centroid track a top break (not all-edge chamfer, which was discarded).
+13	820f93724282	74a85f2dbb8c	0.01512218	discard	When extras are hole_d+pitch_x+pitch_y, cut a 2x2 through-hole grid at (±pitch_x/2, ±pitch_y/2) so plate volume tracks a rectangular bolt pattern instead of a solid box.
+14	820f93724282	a3614ba9be5d	0.01512218	discard	When extras are slot_l+slot_w+slot_x+slot_y, cut a through-slot offset by slot_x/slot_y so volume and centroid track the offset slot.
+15	820f93724282	159bae0b33dc	0.01512218	discard	When extras are hole_d+cbore_d+cbore_h+hole_x+hole_y, cut an offset counterbore so volume and centroid track a shifted cbore instead of a solid box.
+16	820f93724282	08275d1f0ffc	0.01512218	discard	Bind length/width (or length/depth) and thickness as envelope aliases so plates named that way scale with parameters instead of a frozen bbox.
+17	820f93724282	d52d3f8fb82a	0.01512218	discard	When extras are only thick on a width/depth/height box, shell inward from the top face so wall thickness tracks thick (open tray) instead of a solid box.
+18	820f93724282	5f06f71e48d7	0.01512218	discard	When extras are hole_d+hole_h, cut a centered blind hole of depth hole_h so plate volume tracks a stopped bore instead of a through-hole or solid box.
+19	820f93724282	cc1e96d1d7bf	0.00000000	keep	Extrude radius/outer_r cylinders from the XY plane (z=0..height) instead of the centered cylinder primitive so the Z-centroid matches the observed family.
+20	cc1e96d1d7bf	94776141a4ad	0.00000000	discard	When extras are hole_d+csk_d+csk_angle, cut a centered countersink so plate volume tracks the through-hole and the conical csk instead of a solid box.
