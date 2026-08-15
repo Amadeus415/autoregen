@@ -309,6 +309,28 @@ def write_chart(log_path: Path, out_path: Path) -> None:
 # Agents
 # ---------------------------------------------------------------------------
 
+TURN_SECONDS = 900
+
+
+def turn_prompt(root: Path) -> str:
+    here = Path(root).resolve()
+    return (
+        "You are doing ONE research step on a CAD design-intent eval.\n"
+        f"Your workspace is {here}. Stay inside it.\n"
+        f"Read {here / 'program.md'}, {here / 'solver.py'}, "
+        f"and the last 40 lines of {here / 'results.tsv'} if it exists.\n"
+        f"Make exactly one hypothesized improvement to {here / 'solver.py'}.\n"
+        "One capability only — do not add a hole and a boss and a fillet in the same step.\n"
+        f"Write one line to {here / '.hypothesis.txt'} describing the change.\n"
+        "Do not edit any other file.\n"
+        "Do not run prepare.py and do not score yourself.\n"
+        "Do not read data/hidden/, hidden_eval.py, tests/, or any directory outside this workspace.\n"
+        "Do not start a loop — you will be invoked again after the harness scores this change.\n"
+        "Finish after the edit.\n"
+    )
+AGENTS = ("dummy", "grok", "antigravity", "codex")
+
+
 class LauncherError(RuntimeError):
     pass
 
@@ -321,11 +343,42 @@ def _load_dummy():
     return _load_module(path, "dummy_agent").DummyAgent()
 
 
-def _grok_bin() -> str:
-    found = shutil.which("grok")
+def _which(name: str) -> str:
+    found = shutil.which(name)
     if not found:
-        raise LauncherError("grok CLI not on PATH")
+        raise LauncherError(f"{name} CLI not on PATH")
     return found
+
+
+def _run_turn(cmd: list[str], root: Path, log_name: str) -> None:
+    turn_log = root / log_name
+    try:
+        with turn_log.open("a") as fh:
+            fh.write(f"\n--- turn {time.strftime('%H:%M:%S')} ---\n")
+            fh.write(" ".join(cmd[:8]) + " …\n")
+            fh.flush()
+            subprocess.run(
+                cmd,
+                check=True,
+                cwd=root,
+                timeout=TURN_SECONDS,
+                stdin=subprocess.DEVNULL,
+                stdout=fh,
+                stderr=fh,
+            )
+    except FileNotFoundError as exc:
+        raise LauncherError(f"{cmd[0]} CLI not executable") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise LauncherError(f"{cmd[0]} turn timed out: {exc}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise LauncherError(f"{cmd[0]} turn failed: {exc}") from exc
+
+
+def _read_hypothesis(root: Path, fallback: str) -> str:
+    hyp_path = root / ".hypothesis.txt"
+    if hyp_path.is_file() and hyp_path.read_text().strip():
+        return hyp_path.read_text().strip().splitlines()[0]
+    return fallback
 
 
 class GrokAgent:
@@ -333,59 +386,99 @@ class GrokAgent:
         self.model = model
         self.effort = effort
 
-    def propose(self, root: Path) -> str:
-        prompt = (
-            "You are doing ONE research step on a CAD design-intent eval.\n"
-            "Read program.md, solver.py, and the last 40 lines of results.tsv if it exists.\n"
-            "Make exactly one hypothesized improvement to solver.py.\n"
-            "One capability only — do not add a hole and a boss and a fillet in the same step.\n"
-            "Write one line to .hypothesis.txt describing the change.\n"
-            "Do not edit any other file.\n"
-            "Do not run prepare.py and do not score yourself.\n"
-            "Do not read data/hidden/, hidden_eval.py, tests/, or any directory outside this workspace.\n"
-            "Do not start a loop — you will be invoked again after the harness scores this change.\n"
-            "Finish after the edit.\n"
-        )
-        cmd = [
-            _grok_bin(),
-            "-p",
-            prompt,
+    def command(self, root: Path) -> list[str]:
+        return [
+            _which("grok"),
+            "--always-approve",
+            "--no-memory",
+            "--no-subagents",
+            "--disable-web-search",
             "--model",
             self.model,
             "--reasoning-effort",
             self.effort,
-            "--yolo",
             "--max-turns",
             "25",
-            "--no-subagents",
             "--cwd",
             str(root),
             "--output-format",
             "plain",
+            "-p",
+            turn_prompt(root),
         ]
-        turn_log = root / "grok-turn.log"
-        try:
-            with turn_log.open("a") as fh:
-                fh.write(f"\n--- turn {time.strftime('%H:%M:%S')} ---\n")
-                fh.flush()
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    cwd=root,
-                    timeout=720,
-                    stdout=fh,
-                    stderr=fh,
-                )
-        except FileNotFoundError as exc:
-            raise LauncherError("grok CLI not executable") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise LauncherError(f"grok turn timed out: {exc}") from exc
-        except subprocess.CalledProcessError as exc:
-            raise LauncherError(f"grok turn failed: {exc}") from exc
-        hyp_path = root / ".hypothesis.txt"
-        if hyp_path.is_file() and hyp_path.read_text().strip():
-            return hyp_path.read_text().strip().splitlines()[0]
-        return f"grok {self.model} {self.effort} edit"
+
+    def propose(self, root: Path) -> str:
+        _run_turn(self.command(root), root, "grok-turn.log")
+        return _read_hypothesis(root, f"grok {self.model} {self.effort} edit")
+
+
+class AntigravityAgent:
+    def __init__(
+        self, model: str = "gemini-3.7-flash-high", effort: str = "high"
+    ) -> None:
+        self.model = model
+        self.effort = effort
+
+    def command(self, root: Path) -> list[str]:
+        return [
+            _which("agy"),
+            "--new-project",
+            "--add-dir",
+            str(Path(root).resolve()),
+            "--dangerously-skip-permissions",
+            "--mode",
+            "accept-edits",
+            "--model",
+            self.model,
+            "--effort",
+            self.effort,
+            "--print-timeout",
+            "15m",
+            "--print",
+            turn_prompt(root),
+        ]
+
+    def propose(self, root: Path) -> str:
+        _run_turn(self.command(root), root, "agy-turn.log")
+        return _read_hypothesis(root, f"agy {self.model} {self.effort} edit")
+
+
+class CodexAgent:
+    def __init__(self, model: str = "gpt-5.6-terra", effort: str = "high") -> None:
+        self.model = model
+        self.effort = effort
+
+    def command(self, root: Path) -> list[str]:
+        return [
+            _which("codex"),
+            "exec",
+            "--approve-for-me",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--cd",
+            str(root),
+            "--model",
+            self.model,
+            "--config",
+            f'model_reasoning_effort="{self.effort}"',
+            turn_prompt(root),
+        ]
+
+    def propose(self, root: Path) -> str:
+        _run_turn(self.command(root), root, "codex-turn.log")
+        return _read_hypothesis(root, f"codex {self.model} {self.effort} edit")
+
+
+def make_agent(agent: str, model: str, effort: str):
+    if agent == "dummy":
+        return _load_dummy()
+    if agent == "grok":
+        return GrokAgent(model=model, effort=effort)
+    if agent == "antigravity":
+        return AntigravityAgent(model=model, effort=effort)
+    if agent == "codex":
+        return CodexAgent(model=model, effort=effort)
+    raise ValueError(f"unknown agent {agent!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +520,14 @@ def _enforce_solver_only(root: Path) -> None:
         if name != "solver.py":
             _git(root, "checkout", "--", name, check=False)
     listed = _git(root, "ls-files", "--others", "--exclude-standard", check=False)
-    allowed = {".hypothesis.txt", "results.tsv", "chart.png"}
+    allowed = {
+        ".hypothesis.txt",
+        "results.tsv",
+        "chart.png",
+        "grok-turn.log",
+        "agy-turn.log",
+        "codex-turn.log",
+    }
     for name in listed.stdout.split():
         if name in allowed or name.startswith("data/"):
             continue
@@ -466,12 +566,7 @@ def run_loop(
     if log_path.exists():
         log_path.unlink()
 
-    if agent == "dummy":
-        researcher = _load_dummy()
-    elif agent == "grok":
-        researcher = GrokAgent(model=model, effort=effort)
-    else:
-        raise ValueError(f"unknown agent {agent!r}")
+    researcher = make_agent(agent, model, effort)
 
     solver = root / "solver.py"
     scored = score_solver(solver, data_root)
@@ -578,7 +673,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     s.add_argument("--members", choices=("all", "observed", "heldout"), default="all")
 
     lp = sub.add_parser("loop", help="causal keep-if-better loop")
-    lp.add_argument("--agent", choices=("dummy", "grok"), required=True)
+    lp.add_argument("--agent", choices=AGENTS, required=True)
     lp.add_argument("--gens", type=int, default=10)
     lp.add_argument("--root", type=Path, default=None)
     lp.add_argument("--workdir", type=Path, default=None)

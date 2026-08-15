@@ -17,7 +17,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from prepare import GrokAgent, generate_dataset, score_solver  # noqa: E402
+from prepare import (  # noqa: E402
+    AntigravityAgent,
+    CodexAgent,
+    GrokAgent,
+    generate_dataset,
+    make_agent,
+    score_solver,
+)
 
 
 # A real parametric-box solver used only in tests to prove the baseline
@@ -174,10 +181,71 @@ def test_broken_build_scores_one(dataset: Path, tmp_path: Path) -> None:
     assert all(v == 1.0 for v in scored.per_task.values())
 
 
-def test_grok_agent_pins_4_6_medium() -> None:
+def test_grok_agent_pins_4_6_medium(tmp_path: Path) -> None:
     agent = GrokAgent()
     assert agent.model == "grok-4.6"
     assert agent.effort == "medium"
+    cmd = agent.command(tmp_path)
+    assert cmd[0].endswith("grok") or cmd[0] == "grok"
+    assert "--always-approve" in cmd
+    assert "--yolo" not in cmd
+    assert cmd[cmd.index("--model") + 1] == "grok-4.6"
+    assert cmd[cmd.index("--reasoning-effort") + 1] == "medium"
+
+
+def test_antigravity_agent_pins_gemini_37_flash_high(tmp_path: Path) -> None:
+    agent = AntigravityAgent()
+    assert agent.model == "gemini-3.7-flash-high"
+    assert agent.effort == "high"
+    cmd = agent.command(tmp_path)
+    assert cmd[0].endswith("agy") or cmd[0] == "agy"
+    assert cmd[cmd.index("--model") + 1] == "gemini-3.7-flash-high"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    assert "--dangerously-skip-permissions" in cmd
+    assert "--new-project" in cmd
+    assert "--add-dir" in cmd
+    assert str(tmp_path.resolve()) in cmd
+    assert "--print" in cmd
+
+
+def test_codex_agent_pins_terra_high(tmp_path: Path) -> None:
+    agent = CodexAgent()
+    assert agent.model == "gpt-5.6-terra"
+    assert agent.effort == "high"
+    cmd = agent.command(tmp_path)
+    assert cmd[0:2] == [cmd[0], "exec"]
+    assert cmd[0].endswith("codex") or cmd[0] == "codex"
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.6-terra"
+    assert 'model_reasoning_effort="high"' in cmd
+    assert "--approve-for-me" in cmd
+    assert "--ephemeral" in cmd
+
+
+def test_make_agent_routes_named_harnesses() -> None:
+    grok = make_agent("grok", "grok-4.5", "high")
+    agy = make_agent("antigravity", "gemini-3.7-flash-high", "high")
+    codex = make_agent("codex", "gpt-5.6-terra", "high")
+    assert isinstance(grok, GrokAgent) and grok.model == "grok-4.5"
+    assert isinstance(agy, AntigravityAgent)
+    assert isinstance(codex, CodexAgent)
+    with pytest.raises(ValueError, match="unknown agent"):
+        make_agent("cursor", "x", "high")
+
+
+def test_plots_render_from_example_log(tmp_path: Path) -> None:
+    import plots
+
+    log = ROOT / "examples" / "grok-4.6-medium.tsv"
+    written = plots.write_all([("grok-4.6", log)], tmp_path)
+    assert (tmp_path / "race.png").is_file()
+    assert (tmp_path / "loop.png").is_file()
+    assert (tmp_path / "progress-grok-4.6.png").is_file()
+    assert all(p.is_file() and p.stat().st_size > 0 for p in written)
+    rows = plots.parse_log(log)
+    stats = plots.summarize(rows)
+    assert stats["keeps"] == 12
+    assert stats["start"] > 0.2
+    assert stats["end"] == 0.0
 
 
 def test_cli_score_prints_scalar_and_log_path(dataset: Path, tmp_path: Path) -> None:

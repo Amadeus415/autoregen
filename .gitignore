@@ -10,6 +10,8 @@ __pycache__/
 results.tsv
 chart.png
 grok-turn.log
+agy-turn.log
+codex-turn.log
 
 # generated task set (python prepare.py generate)
 data/
