@@ -1,0 +1,22 @@
+gen	start_sha	solver_sha	intent_err	status	hypothesis
+0	d1f8d373b583	d1f8d373b583	0.25771421	keep	baseline
+1	d1f8d373b583	9a4b3fe61c76	0.03055867	keep	bind base solid dimensions to matching parameter names (box width/depth/thickness or cylinder radius/height)
+2	9a4b3fe61c76	996c476f3e55	0.02182752	keep	add support for through-holes (centered and offset holes on plates, concentric hole on cylinders)
+3	996c476f3e55	d662d13a6210	0.00471075	keep	add support for cylindrical bosses (centered and offset bosses on plates)
+4	d662d13a6210	945f4db067eb	0.00369330	keep	add support for counterbore holes (centered and offset counterbores on plates)
+5	945f4db067eb	aa42b48ad5fd	0.00288680	keep	add support for hole patterns with pitch spacing on plates
+6	aa42b48ad5fd	8cd61b397c30	0.00243044	keep	add support for edge fillets on boxes
+7	8cd61b397c30	9cf312bdfb4c	0.00254558	discard	add support for edge chamfers on boxes
+8	8cd61b397c30	b0b2baf86a0d	0.00027587	keep	add support for through-slots on plates
+9	b0b2baf86a0d	bcbec8201341	0.00000000	keep	add support for top-face edge chamfers on boxes
+10	bcbec8201341	4414fca9039d	0.00000000	discard	add support for countersink holes (centered and offset countersinks on plates)
+11	bcbec8201341	4951cdcd2f9c	0.00000000	discard	add support for diameter-specified through-holes on cylinders (inner_d or hole_d)
+12	bcbec8201341	40d70d91b651	0.00000000	discard	add support for 4-hole rectangular pattern with pitch_x and pitch_y on plates
+13	bcbec8201341	af48300bb5c3	0.00000000	discard	add support for rectangular blind pockets on plates (centered and offset)
+14	bcbec8201341	1ba907548467	0.00000000	discard	add support for vertical corner fillets on plates (corner_r or corner_radius)
+15	bcbec8201341	d6f48124ce75	0.00000000	discard	add support for cylinder base solids parameterized by diameter (diameter or outer_d)
+16	bcbec8201341	136b0323fd52	0.00000000	discard	add support for rectangular bosses on plates (centered and offset)
+17	bcbec8201341	e4bc35de3864	0.00000000	discard	add support for blind holes with specified depth on plates (hole_depth, hole_h, or blind_depth)
+18	bcbec8201341	449880b4adf1	0.00000000	discard	add support for circular bolt patterns with pitch circle diameter (pcd or bolt_circle)
+19	bcbec8201341	8fc763f50f10	0.00000000	discard	add support for hollow open-top boxes with specified shell/wall thickness (shell_t, wall_t, or wall_thickness)
+20	bcbec8201341	5284fce17e67	0.00000000	discard	add support for top edge fillets on cylinders (fillet_r or fillet)

@@ -1,0 +1,22 @@
+gen	start_sha	solver_sha	intent_err	status	hypothesis
+0	d1f8d373b583	d1f8d373b583	0.25771421	keep	baseline
+1	d1f8d373b583	7ddb1b58857e	0.07671038	keep	Bind width/depth/height|thick|plate_t param names to box axes instead of hardcoding observed bbox extents.
+2	7ddb1b58857e	85aa5199934a	0.07406043	keep	When hole_d is present, cut a centered through-hole in the parametric box instead of a solid box.
+3	85aa5199934a	ecb9eff5fc05	0.07392169	keep	When hole_x and hole_y are present with hole_d, place the through-hole at (hole_x, hole_y) instead of center so centroid tracks offset params.
+4	ecb9eff5fc05	f8d913b6b9ae	0.04908365	keep	When radius is present, emit a parametric cylinder (circle(radius).extrude(height)) instead of a bbox box so circular solids track radius/height on held-out vectors.
+5	f8d913b6b9ae	726243e6a11d	0.02089932	keep	When outer_r and inner_r are present, emit a parametric tube (circle(outer_r).circle(inner_r).extrude(height)) instead of a solid bbox box so annular solids track radii/height on held-out vectors.
+6	726243e6a11d	a7e6ba2c8fed	0.02040682	keep	When cbore_d and cbore_h are present with hole_d, use cboreHole instead of plain hole so the counterbore cavity volume tracks held-out vectors.
+7	a7e6ba2c8fed	fcfe34b2e9e2	0.00372274	keep	When boss_d and boss_h are present, extrude a centered cylindrical boss on the parametric plate instead of a plain box so boss diameter/height track held-out vectors.
+8	fcfe34b2e9e2	82dbc1b0754b	0.00329005	keep	When boss_x and boss_y are present with boss_d/boss_h, place the cylindrical boss at (boss_x, boss_y) instead of center so centroid tracks offset params.
+9	82dbc1b0754b	9ad5712fa8f2	0.00319070	keep	When fillet_r is present, fillet the vertical (|Z) edges of the parametric box so corner radius tracks held-out vectors.
+10	9ad5712fa8f2	1e65a1cd1f7b	0.00305991	keep	When chamfer is present, chamfer the vertical (|Z) edges of the parametric box so corner bevel size tracks held-out vectors.
+11	1e65a1cd1f7b	1639158ad7e9	0.00090534	keep	When slot_l and slot_w are present, cut a centered through-slot (slot2D + cutThruAll) in the parametric plate so slot length/width track held-out vectors.
+12	1639158ad7e9	bff7441c5196	0.00050209	keep	When pitch is present with hole_d, cut two through-holes via rarray(pitch,1,2,1) so hole spacing tracks the pitch param on held-out vectors.
+13	bff7441c5196	5eae6f95fbd3	0.00014507	keep	When fillet_r is present, fillet all box edges (not only |Z) so spherical corner blends match held-out volume/extent.
+14	5eae6f95fbd3	0cf81fa37538	0.00039102	discard	When chamfer is present, chamfer all box edges (not only |Z) so full-corner bevels match held-out volume/extent, mirroring the successful fillet_r all-edges change.
+15	5eae6f95fbd3	4c654f9c5ada	0.00000000	keep	When chamfer is present, chamfer the top-face edges (faces('>Z').edges()) instead of vertical |Z edges so the top bevel shifts centroid and volume to match held-out vectors.
+16	4c654f9c5ada	ff4d21b2779d	0.00000000	discard	When slot_x and slot_y are present with slot_l/slot_w, place the through-slot at (slot_x, slot_y) instead of center so centroid tracks offset params.
+17	4c654f9c5ada	5f3c6698a723	0.00000000	discard	Bind length/breadth/thickness as axis aliases (X/Y/Z) when width/depth/height|thick|plate_t are absent so alternate dim names still drive the parametric box.
+18	4c654f9c5ada	ddcb0c3ce07e	0.00000000	discard	When csink_d and csink_angle are present with hole_d, use cskHole instead of plain hole so the countersink cone volume tracks held-out vectors.
+19	4c654f9c5ada	e178f589fb7d	0.00000000	discard	When pitch_x and pitch_y are present with hole_d, cut a 2x2 hole grid via rarray(pitch_x, pitch_y, 2, 2) so rectangular hole spacing tracks held-out vectors.
+20	4c654f9c5ada	bd4d8af3e0dc	0.00000000	discard	When hole_depth is present with hole_d, cut a blind hole (hole(hole_d, hole_depth)) instead of through so cavity depth tracks held-out vectors.

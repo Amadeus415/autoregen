@@ -1,0 +1,22 @@
+gen	start_sha	solver_sha	intent_err	status	hypothesis
+0	d1f8d373b583	d1f8d373b583	0.25771421	keep	baseline
+1	d1f8d373b583	3d673867417f	0.15682262	keep	Bind recognized length, depth, and height parameter names to the box extents.
+2	3d673867417f	13dfccf645c0	0.14820370	keep	Recognize simple vertical cylinders and bind a named radius or diameter parameter to their regenerated cylindrical body.
+3	13dfccf645c0	a43e6735d5a1	0.14820370	discard	Recognize rectangular plates with one named vertical through-hole and regenerate the hole diameter and optional x/y placement from parameters.
+4	13dfccf645c0	a61158f66f30	0.14820370	discard	Recognize simple cylinders along the X or Y axis and regenerate their axial parameter as well as their radius or diameter.
+5	13dfccf645c0	c05bafcb3c89	0.14820370	discard	Bind a named width parameter to the second rectangular-prism extent when length drives the first extent.
+6	13dfccf645c0	0f8828f260d8	0.14820370	discard	Bind outer_radius and outer_diameter parameter aliases when regenerating simple vertical cylinders.
+7	13dfccf645c0	cd9fde72ed53	0.14820370	discard	Recognize simple spheres and regenerate them from a named radius or diameter parameter.
+8	13dfccf645c0	e13e438738e4	0.14820370	discard	Recognize simple vertical cones and regenerate their height with a named base radius or paired base/top radius parameters.
+9	13dfccf645c0	9ddd879698b9	0.14820370	discard	Recognize rectangular prisms with four vertical corner fillets and bind one named fillet-radius parameter.
+10	13dfccf645c0	2dcfc0785a93	0.14807290	keep	Recognize rectangular prisms with four vertical chamfers and bind a named chamfer or bevel parameter.
+11	2dcfc0785a93	cbc790aeb1ee	0.14807290	discard	Recognize a rectangular base with one vertical cylindrical boss and bind named boss size and height parameters to its regenerated boss.
+12	2dcfc0785a93	d981af358d32	0.13391381	keep	Recognize simple concentric vertical tubes and regenerate their named inner and outer radii or diameters.
+13	d981af358d32	49d3ad2d4f62	0.13391381	discard	Recognize boxes rounded along all twelve edges and bind one named fillet radius when their planar, cylindrical, and spherical face topology matches.
+14	d981af358d32	7ea0b2dfffa0	0.13391381	discard	Recognize rectangular plates with a centered rectangular through-slot and bind named slot length and width parameters.
+15	d981af358d32	19eef008091b	0.13391381	discard	Recognize centered vertical counterbores in planar bodies and bind their through-hole, counterbore diameter, and counterbore-depth parameters.
+16	d981af358d32	3163b8631ef1	0.13391381	discard	Recognize simple vertical cylinders with one centered blind bore and bind its named bore depth and inner radius or diameter.
+17	d981af358d32	7386ef016c54	0.13391381	discard	Recognize simple vertical regular polygon prisms and regenerate their named circumradius or diameter and height.
+18	d981af358d32	61ae3ea03250	0.13391381	discard	Recognize topology-confirmed rectangular plates with one centered countersunk vertical through-hole and bind its hole, countersink, and depth parameters.
+19	d981af358d32	8f8d8adb24e5	0.13391381	discard	Recognize simple vertical tori and regenerate named major and minor radii.
+20	d981af358d32	3fd9a8104cb0	0.13391381	discard	Recognize topology-confirmed rectangular bodies with one centered blind rectangular pocket and bind its length, width, and depth parameters.
