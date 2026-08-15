@@ -97,11 +97,13 @@ def test_dummy_loop_ten_causal_steps_twice(tmp_path: Path) -> None:
     for dest in (first, second):
         dest.mkdir()
         _workspace(dest)
-        log_path = run_loop(dest, agent="dummy", gens=10)
+        log_path = run_loop(dest, agent="dummy", gens=15)
         logs.append(log_path)
         rows = parse_log(log_path)
         agent_rows = [r for r in rows if r.gen >= 1]
+        keeps = [r for r in rows if r.gen >= 1 and r.status == "keep"]
         assert len(agent_rows) >= 10
+        assert len(keeps) >= 10, f"only {len(keeps)} accepted steps: {[r.status for r in agent_rows]}"
         last_keep = rows[0].solver_sha
         for row in agent_rows:
             assert row.hypothesis.strip()
@@ -133,7 +135,7 @@ def test_cli_loop_prints_scalar_and_nonempty_log(tmp_path: Path) -> None:
             "--agent",
             "dummy",
             "--gens",
-            "10",
+            "15",
             "--workdir",
             str(workdir),
         ],
@@ -153,6 +155,7 @@ def test_cli_loop_prints_scalar_and_nonempty_log(tmp_path: Path) -> None:
     assert log_path.is_file()
     rows = parse_log(log_path)
     assert len([r for r in rows if r.gen >= 1]) >= 10
+    assert len([r for r in rows if r.gen >= 1 and r.status == "keep"]) >= 10
     assert float(lines["intent_err"]) == rows[-1].intent_err or float(
         lines["intent_err"]
     ) == min(r.intent_err for r in rows if r.status == "keep")

@@ -8,8 +8,9 @@ Three artifacts matter:
   program.md   human-written research brief
 
 Metric: intent_err = mean shape error over {observed} ∪ {held-out members}.
-shape_err is ½ relative volume error + ½ mean relative bbox-extent error.
-Lower is better. Same solver twice → same number.
+shape_err is ⅓ volume + ⅓ bbox extents + ⅓ mass-centroid.
+Lower is better. Same solver twice → same number. The centroid term
+makes offset holes/bosses score differently from centered ones.
 """
 
 from __future__ import annotations
@@ -49,29 +50,37 @@ def _as_solid(obj):
     return obj
 
 
-def _props(solid) -> tuple[float, tuple[float, float, float]]:
+def _props(
+    solid,
+) -> tuple[float, tuple[float, float, float], tuple[float, float, float]]:
     solid = _as_solid(solid)
     volume = float(solid.Volume())
     bb = solid.BoundingBox()
-    return volume, (float(bb.xlen), float(bb.ylen), float(bb.zlen))
+    extents = (float(bb.xlen), float(bb.ylen), float(bb.zlen))
+    c = solid.Center()
+    return volume, extents, (float(c.x), float(c.y), float(c.z))
 
 
 def shape_err(pred, gt) -> float:
-    """Volume + bbox extents. Crash / empty → 1.0."""
+    """Volume + bbox extents + mass centroid. Crash / empty → 1.0."""
     try:
-        pv, pe = _props(pred)
-        gv, ge = _props(gt)
+        pv, pe, pc = _props(pred)
+        gv, ge, gc = _props(gt)
     except Exception:
         return 1.0
     if gv <= 1e-12 or pv <= 1e-12:
         return 1.0
     vol_term = abs(pv - gv) / gv
     bbox_term = sum(abs(a - b) / max(b, 1e-9) for a, b in zip(pe, ge)) / 3.0
-    return min(1.0, 0.5 * vol_term + 0.5 * bbox_term)
+    diag = max((ge[0] ** 2 + ge[1] ** 2 + ge[2] ** 2) ** 0.5, 1e-9)
+    cent_term = (
+        (pc[0] - gc[0]) ** 2 + (pc[1] - gc[1]) ** 2 + (pc[2] - gc[2]) ** 2
+    ) ** 0.5 / diag
+    return min(1.0, (vol_term + bbox_term + cent_term) / 3.0)
 
 
 def _task_id(family_key: str, seed: int) -> str:
-    digest = hashlib.sha256(f"autoregen-v1|{seed}|{family_key}".encode()).hexdigest()
+    digest = hashlib.sha256(f"autoregen-v2|{seed}|{family_key}".encode()).hexdigest()
     return f"t_{digest[:8]}"
 
 
@@ -329,6 +338,7 @@ class GrokAgent:
             "You are doing ONE research step on a CAD design-intent eval.\n"
             "Read program.md, solver.py, and the last 40 lines of results.tsv if it exists.\n"
             "Make exactly one hypothesized improvement to solver.py.\n"
+            "One capability only — do not add a hole and a boss and a fillet in the same step.\n"
             "Write one line to .hypothesis.txt describing the change.\n"
             "Do not edit any other file.\n"
             "Do not run prepare.py and do not score yourself.\n"

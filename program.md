@@ -22,7 +22,9 @@ The immutable evaluator in `prepare.py` rebuilds the family at the observed para
 
 ```
 intent_err  ∈ [0, 1]   lower is better
-shape_err   = ½ · |Δvolume|/volume_gt  +  ½ · mean |Δextent|/extent_gt
+shape_err   = ⅓ · |Δvolume|/volume_gt
+            + ⅓ · mean |Δextent|/extent_gt
+            + ⅓ · |Δcentroid| / bbox_diagonal
 ```
 
 A crash, timeout, or invalid solid scores 1.0 for that member. Same solver scored twice yields the same number.
@@ -62,9 +64,11 @@ Rejected edits are not the next start. The cloud of discards is the honest part 
 The baseline emits the observed bounding box and ignores parameters. It is mediocre on purpose.
 
 1. Bind parameter names to the dimensions they name. A `width` that does not drive width is not intent.
-2. Use topology on the observed solid (planes, cylinders, through-holes, bosses) to choose a builder, then let **parameters** drive it.
-3. Prefer a short `build()` that regenerates. A soup of observed numbers will not survive held-out vectors.
-4. One change per generation. Read the log: do not retry a discarded idea verbatim; combine near-misses.
+2. Use topology on the observed solid (planes, cylinders, through-holes, bosses, slots, blends) to choose a builder, then let **parameters** drive it.
+3. A centered hole is not the same as an offset hole. `hole_x` / `hole_y` / `boss_x` / `boss_y` move the mass centroid. Volume-only builders leave that term on the table.
+4. Fillets, chamfers, counterbores, slots, and hole patterns are separate families. Add **one** capability per generation.
+5. Prefer a short `build()` that regenerates. A soup of observed numbers will not survive held-out vectors.
+6. Read the log: do not retry a discarded idea verbatim; combine near-misses.
 
 ## Do not
 

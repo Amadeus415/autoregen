@@ -14,10 +14,10 @@ score:
 	$(PYTHON) prepare.py score
 
 dummy:
-	$(PYTHON) prepare.py loop --agent dummy --gens 10 --workdir runs/dummy
+	$(PYTHON) prepare.py loop --agent dummy --gens 15 --workdir runs/dummy
 
 grok:
-	$(PYTHON) prepare.py loop --agent grok --gens 10 --workdir runs/grok --model grok-4.6 --effort medium
+	$(PYTHON) prepare.py loop --agent grok --gens 20 --workdir runs/grok --model grok-4.6 --effort medium
 
 chart:
 	$(PYTHON) prepare.py chart

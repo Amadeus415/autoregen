@@ -1,8 +1,8 @@
 """Local researcher used to prove the ratchet without a model.
 
 Each call applies one hypothesized edit to solver.py. Improvements are
-incremental CAD capabilities; the junk steps exist so keep/discard/crash
-all appear. This file is not part of the research surface.
+one CAD capability at a time so the hill has many rungs. Junk steps
+exist so discard/crash still appear. This file is not the research surface.
 """
 
 from __future__ import annotations
@@ -42,14 +42,6 @@ def render_solver(features: set[str]) -> str:
             '    if {"radius", "height"} <= named:',
             '        body = "return cq.Workplane(\'XY\').circle(radius).extrude(height)"',
         ]
-    if "hole" in features:
-        lines += [
-            '    if {"width", "depth", "thick", "hole_d"} <= named:',
-            '        body = (',
-            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
-            '            ".faces(\'>Z\').workplane().hole(hole_d))"',
-            '        )',
-        ]
     if "tube" in features:
         lines += [
             '    if {"outer_r", "inner_r", "height"} <= named:',
@@ -58,18 +50,83 @@ def render_solver(features: set[str]) -> str:
             '            ".circle(inner_r).extrude(height))"',
             '        )',
         ]
+    if "hole" in features:
+        lines += [
+            '    if ({"width", "depth", "thick", "hole_d"} <= named',
+            '            and "hole_x" not in named and "cbore_d" not in named',
+            '            and "pitch" not in named):',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
+            '            ".faces(\'>Z\').workplane().hole(hole_d))"',
+            '        )',
+        ]
+    if "hole_xy" in features:
+        lines += [
+            '    if {"width", "depth", "thick", "hole_d", "hole_x", "hole_y"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
+            '            ".faces(\'>Z\').workplane().center(hole_x, hole_y).hole(hole_d))"',
+            '        )',
+        ]
     if "boss" in features:
         lines += [
-            '    if {"width", "depth", "plate_t", "boss_d", "boss_h"} <= named:',
+            '    if ({"width", "depth", "plate_t", "boss_d", "boss_h"} <= named',
+            '            and "boss_x" not in named):',
             '        body = (',
             '            "return (cq.Workplane(\'XY\').box(width, depth, plate_t)"',
             '            ".faces(\'>Z\').workplane().circle(boss_d / 2).extrude(boss_h))"',
             '        )',
         ]
-    if "swap" in features:
+    if "boss_xy" in features:
         lines += [
-            '    if {"width", "depth", "height"} <= named:',
-            '        body = "return cq.Workplane(\'XY\').box(height, width, depth)"',
+            '    if {"width", "depth", "plate_t", "boss_d", "boss_h", "boss_x", "boss_y"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, plate_t)"',
+            '            ".faces(\'>Z\').workplane().center(boss_x, boss_y)"',
+            '            ".circle(boss_d / 2).extrude(boss_h))"',
+            '        )',
+        ]
+    if "fillet" in features:
+        lines += [
+            '    if {"width", "depth", "height", "fillet_r"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, height)"',
+            '            ".edges().fillet(fillet_r))"',
+            '        )',
+        ]
+    if "chamfer" in features:
+        lines += [
+            '    if {"width", "depth", "height", "chamfer"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, height)"',
+            '            ".edges(\'>Z\').chamfer(chamfer))"',
+            '        )',
+        ]
+    if "cbore" in features:
+        lines += [
+            '    if {"width", "depth", "thick", "hole_d", "cbore_d", "cbore_h"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
+            '            ".faces(\'>Z\').workplane()"',
+            '            ".cboreHole(hole_d, cbore_d, cbore_h))"',
+            '        )',
+        ]
+    if "slot" in features:
+        lines += [
+            '    if {"width", "depth", "thick", "slot_l", "slot_w"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
+            '            ".faces(\'>Z\').workplane().slot2D(slot_l, slot_w).cutThruAll())"',
+            '        )',
+        ]
+    if "pitch" in features:
+        lines += [
+            '    if {"width", "depth", "thick", "hole_d", "pitch"} <= named:',
+            '        body = (',
+            '            "return (cq.Workplane(\'XY\').box(width, depth, thick)"',
+            '            ".faces(\'>Z\').workplane()"',
+            '            ".pushPoints([(-pitch / 2, 0), (pitch / 2, 0)]).hole(hole_d))"',
+            '        )',
         ]
     if "unit" in features:
         lines += [
@@ -90,36 +147,110 @@ def _comment(src: str) -> str:
     return src.rstrip() + "\n\n# hypothesis-only comment; no behavior change\n"
 
 
-def _whitespace(src: str) -> str:
-    return src.rstrip() + "\n\n\n"
-
-
 def _break_solve(src: str) -> str:
     return src.replace("def solve", "def solv", 1)
 
 
+# One capability per keep. Order is the intended staircase.
+_KEEP_STEPS = [
+    ({"bind"}, "bind width/depth/height/thick to the box"),
+    ({"bind", "cyl"}, "emit a cylinder when radius is present"),
+    ({"bind", "cyl", "tube"}, "emit a tube when inner_r and outer_r are present"),
+    ({"bind", "cyl", "tube", "hole"}, "cut a centered through-hole when hole_d is present"),
+    (
+        {"bind", "cyl", "tube", "hole", "hole_xy"},
+        "offset the hole when hole_x and hole_y are present",
+    ),
+    (
+        {"bind", "cyl", "tube", "hole", "hole_xy", "boss"},
+        "emit a centered boss when boss_d and boss_h are present",
+    ),
+    (
+        {"bind", "cyl", "tube", "hole", "hole_xy", "boss", "boss_xy"},
+        "offset the boss when boss_x and boss_y are present",
+    ),
+    (
+        {"bind", "cyl", "tube", "hole", "hole_xy", "boss", "boss_xy", "fillet"},
+        "fillet all edges when fillet_r is present",
+    ),
+    (
+        {
+            "bind",
+            "cyl",
+            "tube",
+            "hole",
+            "hole_xy",
+            "boss",
+            "boss_xy",
+            "fillet",
+            "chamfer",
+        },
+        "chamfer the top edges when chamfer is present",
+    ),
+    (
+        {
+            "bind",
+            "cyl",
+            "tube",
+            "hole",
+            "hole_xy",
+            "boss",
+            "boss_xy",
+            "fillet",
+            "chamfer",
+            "cbore",
+        },
+        "cut a counterbore when cbore_d and cbore_h are present",
+    ),
+    (
+        {
+            "bind",
+            "cyl",
+            "tube",
+            "hole",
+            "hole_xy",
+            "boss",
+            "boss_xy",
+            "fillet",
+            "chamfer",
+            "cbore",
+            "slot",
+        },
+        "cut a through-slot when slot_l and slot_w are present",
+    ),
+    (
+        {
+            "bind",
+            "cyl",
+            "tube",
+            "hole",
+            "hole_xy",
+            "boss",
+            "boss_xy",
+            "fillet",
+            "chamfer",
+            "cbore",
+            "slot",
+            "pitch",
+        },
+        "cut a two-hole pattern when pitch is present",
+    ),
+]
+
+
 def _proposals():
-    return [
-        (lambda src: render_solver({"bind"}), "bind width/depth/height/thick to the box"),
-        (_comment, "add a comment, no behavior change"),
-        (lambda src: render_solver({"bind", "cyl"}), "emit a cylinder when radius is present"),
-        (lambda src: render_solver({"unit"}), "always emit a unit cube"),
-        (
-            lambda src: render_solver({"bind", "cyl", "hole"}),
-            "cut a through-hole when hole_d is present",
-        ),
-        (_break_solve, "rename solve so the module no longer exports it"),
-        (
-            lambda src: render_solver({"bind", "cyl", "hole", "tube"}),
-            "emit a tube when inner_r and outer_r are present",
-        ),
-        (_whitespace, "add trailing whitespace"),
-        (
-            lambda src: render_solver({"bind", "cyl", "hole", "tube", "boss"}),
-            "emit a boss when boss_d and boss_h are present",
-        ),
-        (lambda src: render_solver({"bind"}), "drop later features and keep only box binding"),
-    ]
+    ideas = []
+    for feats, hyp in _KEEP_STEPS:
+        ideas.append((lambda src, f=feats: render_solver(f), hyp))
+        if len(ideas) == 2:
+            ideas.append((_comment, "add a comment, no behavior change"))
+        if len(ideas) == 6:
+            ideas.append((_break_solve, "rename solve so the module no longer exports it"))
+        if len(ideas) == 11:
+            ideas.append(
+                (lambda src: render_solver({"unit"}), "always emit a unit cube")
+            )
+    return ideas
 
 
 class DummyAgent:
