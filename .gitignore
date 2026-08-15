@@ -6,26 +6,13 @@ __pycache__/
 .mypy_cache/
 .DS_Store
 
-# runtime artifacts
-last_eval.json
-last_gate.json
-best_per_task.json
-noise_floor.json
 .hypothesis.txt
-solver.py.bak
-violations.log
-test_gen*.json
-testood_gen*.json
+results.tsv
+chart.png
+grok-turn.log
 
-# large generated data (regenerate with prepare.py generate)
-data/families/
-data/gt/
-data/manifest.json
+# generated task set (python prepare.py generate)
+data/
 
-# plots output (keep script)
-plots/chart.png
-plots/__pycache__/
-
-# isolated model-arm benchmark artifacts
-benchmark_runs/
-.benchmark_work/
+# isolated loop workspaces (agent cwd + sibling sealed GT)
+runs/

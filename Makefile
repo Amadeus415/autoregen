@@ -1,4 +1,4 @@
-.PHONY: setup quick gen0 loop chart benchmark benchmark-audit benchmark-preflight full-data verify
+.PHONY: setup generate score dummy grok test chart
 
 PYTHON ?= .venv/bin/python
 
@@ -7,31 +7,20 @@ setup:
 	.venv/bin/pip install -U pip wheel
 	.venv/bin/pip install -r requirements.txt
 
-quick:
-	$(PYTHON) prepare.py generate --quick
-	$(PYTHON) prepare.py checksum --write
+generate:
+	$(PYTHON) prepare.py generate
 
-full-data:
-	$(PYTHON) prepare.py generate --seed 42
-	$(PYTHON) prepare.py checksum --write
+score:
+	$(PYTHON) prepare.py score
 
-gen0:
-	$(PYTHON) prepare.py gen0 --workers 4
+dummy:
+	$(PYTHON) prepare.py loop --agent dummy --gens 10 --workdir runs/dummy
 
-loop:
-	MAX_GENS=$${MAX_GENS:-50} WORKERS=$${WORKERS:-4} ./loop.sh
+grok:
+	$(PYTHON) prepare.py loop --agent grok --gens 10 --workdir runs/grok --model grok-4.6 --effort medium
 
 chart:
-	$(PYTHON) plots/make_chart.py
+	$(PYTHON) prepare.py chart
 
-benchmark-preflight:
-	$(PYTHON) benchmark_models.py --preflight-only
-
-benchmark:
-	$(PYTHON) benchmark_models.py --generations $${GENERATIONS:-3} --workers $${WORKERS:-4}
-
-benchmark-audit:
-	test -n "$${RUN}" && $(PYTHON) audit_benchmark.py "$${RUN}"
-
-verify:
-	$(PYTHON) prepare.py verify-checksum
+test:
+	$(PYTHON) -m pytest tests/ -q
