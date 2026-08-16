@@ -43,6 +43,7 @@ PALETTE = {
     "grok-4.5": "#1D9BF0",
     "gemini-3.7-flash": "#7C3AED",
     "gpt-5.6-terra": "#059669",
+    "gpt-5.6-sol": "#F59E0B",
     "grok-4.6": "#64748B",
 }
 
@@ -50,12 +51,14 @@ LABELS = {
     "grok-4.5": "Grok 4.5  ·  high  ·  grok CLI",
     "gemini-3.7-flash": "Gemini 3.7 Flash  ·  high  ·  antigravity",
     "gpt-5.6-terra": "GPT-5.6 Terra  ·  high  ·  Codex",
+    "gpt-5.6-sol": "GPT-5.6 Sol  ·  medium  ·  Codex",
     "grok-4.6": "Grok 4.6  ·  medium  ·  grok CLI",
 }
 SHORT = {
     "grok-4.5": "Grok 4.5",
     "gemini-3.7-flash": "Gemini 3.7",
     "gpt-5.6-terra": "Terra",
+    "gpt-5.6-sol": "Sol",
     "grok-4.6": "Grok 4.6",
 }
 
@@ -171,7 +174,8 @@ def write_race(runs: list[tuple[str, list[Row], str]], out: Path) -> None:
     ax.set_xlabel("generation")
     ax.set_ylabel("intent_err   (lower is better)")
     ax.set_title("Recovering design intent — accepted frontier vs every attempt")
-    ax.set_ylim(-0.01, 0.30)
+    peak = max(r.intent_err for _, rows, _ in runs for r in rows)
+    ax.set_ylim(-0.01, max(0.30, peak + 0.04))
     ax.set_xlim(-0.6, max(r.gen for _, rows, _ in runs for r in rows) + 0.8)
     ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     ax.legend(loc="upper right", fontsize=10)
@@ -288,7 +292,7 @@ def write_summary(runs: list[tuple[str, list[Row], str]], out: Path) -> None:
     axes[2].set_xticklabels([SHORT.get(n, n) for n in names], fontsize=9)
     axes[2].set_ylim(0, 100)
 
-    fig.suptitle("Same hill, three researchers", fontsize=14, fontweight="semibold")
+    fig.suptitle("Same hill, four researchers", fontsize=14, fontweight="semibold")
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=160)
@@ -442,6 +446,7 @@ def default_items() -> list[tuple[str, Path]]:
         ("grok-4.5", ROOT / "examples" / "grok-4.5-high.tsv"),
         ("gemini-3.7-flash", ROOT / "examples" / "gemini-3.7-flash-high.tsv"),
         ("gpt-5.6-terra", ROOT / "examples" / "gpt-5.6-terra-high.tsv"),
+        ("gpt-5.6-sol", ROOT / "examples" / "gpt-5.6-sol-medium.tsv"),
     ]
     found = [(n, p) for n, p in candidates if p.is_file()]
     if found:
@@ -476,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                 "grok-4.5": ROOT / "runs" / "grok-4.5",
                 "gemini-3.7-flash": ROOT / "runs" / "gemini-3.7-flash",
                 "gpt-5.6-terra": ROOT / "runs" / "codex-terra-high",
+                "gpt-5.6-sol": ROOT / "runs" / "codex-sol-medium",
             }.get(name, path.parent)
         )
         solver = run_dir / "solver.py"
