@@ -87,11 +87,29 @@ That is the eval doing its job. A solver can look plausible on the observed memb
 
 ![grok progress](plots/progress-grok-4.5.png)
 
-**GPT-5.6 Sol** (medium) bound height, then width, then depth — one axis per keep — plus a cylinder, plate thickness, a centered hole, and an offset hole. Generation 1 made the score *worse* (0.39) and was discarded. At gen 20 the frontier was 0.113.
-
-Then it was resumed. Gen 21 recovered the tube. Gen 31 recovered both boss families in one step (0.085 → 0.013). Slot and fillet followed. Chamfer, counterbore, and a 2×2 hole grid were tried under the wrong names and discarded. Eleven keeps in 40 tries, frontier 0.011.
+**GPT-5.6 Sol** (medium), Codex harness. 40 generations, **11 accepted** steps. `intent_err` 0.258 → 0.011. At the shared 20-gen budget it was 0.113; the extra 20 is where the tube and bosses landed.
 
 ![sol progress](plots/progress-gpt-5.6-sol.png)
+
+| gen | `intent_err` | | what it tried |
+|---:|---:|:---:|---|
+| 0 | 0.258 | keep | baseline: emit the observed box, ignore parameters |
+| 1 | 0.392 | discard | bind length/width/height at once — score got *worse* |
+| 2 | 0.235 | keep | bind `height` to Z |
+| 3 | 0.197 | keep | bind `width` to X |
+| 5 | 0.157 | keep | bind `depth` to Y |
+| 6 | 0.140 | keep | cylinder from `radius` |
+| 15 | 0.115 | keep | bind `thick` to plate Z |
+| 18 | 0.114 | keep | centered through-hole from `hole_d` |
+| 19 | 0.113 | keep | offset hole from `hole_x` / `hole_y` |
+| 21 | 0.085 | keep | tube from `outer_r` / `inner_r` |
+| 31 | 0.013 | keep | centered and offset bosses from `boss_d` / `boss_h` / `boss_x` / `boss_y` |
+| 32 | 0.011 | keep | through-slot from `slot_l` / `slot_w` |
+| 33 | 0.011 | keep | vertical-edge fillet from `fillet_r` |
+| 34 | 0.011 | discard | chamfer as `chamfer_d` (the family is named `chamfer`) |
+| 37 | 0.011 | discard | counterbore under the wrong aliases |
+
+The leftover 0.011 is a slightly-wrong cylinder plus thin misses on counterbore and the two-hole pattern. Raw log: [`examples/gpt-5.6-sol-medium.tsv`](examples/gpt-5.6-sol-medium.tsv).
 
 **GPT-5.6 Terra** (high) tried a different strategy: infer the family from the *observed solid’s topology*, then bind names. That recovered the box, a vertical cylinder, a chamfer, and a tube. Most of the other hypotheses (spheres, cones, tori, polygons, countersinks, pockets) were not on the hill, so they discarded. Sixteen rejects, four keeps, frontier stuck at 0.134.
 
