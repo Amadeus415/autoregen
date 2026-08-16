@@ -1,4 +1,4 @@
-.PHONY: setup generate score dummy grok grok45 gemini terra sol test chart compare
+.PHONY: setup generate score dummy grok grok45 gemini terra sol sol-more test chart compare
 
 PYTHON ?= .venv/bin/python
 
@@ -30,6 +30,9 @@ terra:
 
 sol:
 	$(PYTHON) prepare.py loop --agent codex --gens 20 --workdir runs/codex-sol-medium --model gpt-5.6-sol --effort medium
+
+sol-more:
+	$(PYTHON) prepare.py loop --agent codex --gens 20 --workdir runs/codex-sol-medium --model gpt-5.6-sol --effort medium --resume
 
 chart:
 	$(PYTHON) prepare.py chart

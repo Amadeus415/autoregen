@@ -553,6 +553,7 @@ def run_loop(
     model: str = "grok-4.6",
     effort: str = "medium",
     data_root: Path | None = None,
+    resume: bool = False,
 ) -> Path:
     """Causal keep-if-better loop. Returns path to results.tsv."""
     root = Path(root)
@@ -563,23 +564,46 @@ def run_loop(
         raise FileNotFoundError(f"no solver.py in {root}")
     _ensure_git(root)
     log_path = root / "results.tsv"
-    if log_path.exists():
-        log_path.unlink()
-
     researcher = make_agent(agent, model, effort)
-
     solver = root / "solver.py"
-    scored = score_solver(solver, data_root)
-    start = solver_sha(solver)
-    _append_row(
-        log_path,
-        Row(0, start, start, scored.intent_err, "keep", "baseline"),
-    )
-    best = scored.intent_err
-    accepted = start
-    print(f"gen\t0\t{scored.intent_err:.8f}\tkeep\tbaseline", flush=True)
 
-    for gen in range(1, gens + 1):
+    if resume:
+        if not log_path.is_file():
+            raise FileNotFoundError(f"nothing to resume: {log_path}")
+        rows = parse_log(log_path)
+        keeps = [r for r in rows if r.status == "keep"]
+        if not rows or not keeps:
+            raise RuntimeError(f"empty log, cannot resume: {log_path}")
+        accepted = keeps[-1].solver_sha
+        best = keeps[-1].intent_err
+        start_gen = rows[-1].gen + 1
+        end_gen = rows[-1].gen + gens
+        current = solver_sha(solver)
+        if current != accepted:
+            raise RuntimeError(
+                f"solver {current} is not last accepted {accepted}; "
+                "resume from the frontier, not a discarded edit"
+            )
+        print(
+            f"gen\t{keeps[-1].gen}\t{best:.8f}\tkeep\tresume",
+            flush=True,
+        )
+    else:
+        if log_path.exists():
+            log_path.unlink()
+        scored = score_solver(solver, data_root)
+        start = solver_sha(solver)
+        _append_row(
+            log_path,
+            Row(0, start, start, scored.intent_err, "keep", "baseline"),
+        )
+        best = scored.intent_err
+        accepted = start
+        start_gen = 1
+        end_gen = gens
+        print(f"gen\t0\t{scored.intent_err:.8f}\tkeep\tbaseline", flush=True)
+
+    for gen in range(start_gen, end_gen + 1):
         start_sha = solver_sha(solver)
         if start_sha != accepted:
             raise RuntimeError(
@@ -635,12 +659,21 @@ def run_loop(
     return log_path
 
 
-def _prepare_workdir(src: Path, dest: Path, _agent: str) -> tuple[Path, Path]:
+def _prepare_workdir(
+    src: Path, dest: Path, _agent: str, *, resume: bool = False
+) -> tuple[Path, Path]:
     """Agent workspace: solver + brief + visible tasks. GT stays in *.sealed."""
+    dest = Path(dest)
+    sealed = dest.parent / f"{dest.name}.sealed"
+    if resume:
+        if not (dest / "solver.py").is_file():
+            raise FileNotFoundError(f"resume workdir missing solver: {dest}")
+        if not (sealed / "data" / "hidden").is_dir():
+            raise FileNotFoundError(f"resume sealed set missing: {sealed}")
+        return dest, sealed
     dest.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src / "solver.py", dest / "solver.py")
     shutil.copy2(src / "program.md", dest / "program.md")
-    sealed = dest.parent / f"{dest.name}.sealed"
     generate_dataset(sealed)
     tasks_src = sealed / "data" / "tasks"
     tasks_dst = dest / "data" / "tasks"
@@ -679,6 +712,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     lp.add_argument("--workdir", type=Path, default=None)
     lp.add_argument("--model", default="grok-4.6")
     lp.add_argument("--effort", default="medium")
+    lp.add_argument(
+        "--resume",
+        action="store_true",
+        help="append gens onto an existing workdir log instead of starting over",
+    )
 
     c = sub.add_parser("chart", help="draw the frontier from a log")
     c.add_argument("--log", type=Path, default=Path("results.tsv"))
@@ -707,7 +745,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         src = Path.cwd()
         data_root = None
         if args.workdir is not None:
-            root, data_root = _prepare_workdir(src, args.workdir.resolve(), args.agent)
+            root, data_root = _prepare_workdir(
+                src, args.workdir.resolve(), args.agent, resume=args.resume
+            )
         else:
             root = (args.root or src).resolve()
             if not (root / "data" / "tasks").is_dir():
@@ -721,6 +761,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 model=args.model,
                 effort=args.effort,
                 data_root=data_root,
+                resume=args.resume,
             )
         except LauncherError as exc:
             print(f"launcher_error\t{exc}", file=sys.stderr)

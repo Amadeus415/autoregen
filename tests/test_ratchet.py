@@ -125,6 +125,24 @@ def test_dummy_loop_ten_causal_steps_twice(tmp_path: Path) -> None:
     assert [r.intent_err for r in a] == [r.intent_err for r in b]
 
 
+def test_resume_appends_without_resetting_frontier(tmp_path: Path) -> None:
+    dest = tmp_path / "run"
+    dest.mkdir()
+    _workspace(dest)
+    first = run_loop(dest, agent="dummy", gens=3)
+    before = parse_log(first)
+    kept_sha = [r for r in before if r.status == "keep"][-1].solver_sha
+    assert solver_sha(dest / "solver.py") == kept_sha
+    second = run_loop(dest, agent="dummy", gens=2, resume=True)
+    after = parse_log(second)
+    assert [r.gen for r in after[: len(before)]] == [r.gen for r in before]
+    assert [r.solver_sha for r in after[: len(before)]] == [r.solver_sha for r in before]
+    assert after[-1].gen == before[-1].gen + 2
+    assert after[len(before)].start_sha == kept_sha
+    last_keep = [r for r in after if r.status == "keep"][-1].solver_sha
+    assert solver_sha(dest / "solver.py") == last_keep
+
+
 def test_cli_loop_prints_scalar_and_nonempty_log(tmp_path: Path) -> None:
     workdir = tmp_path / "agent"
     result = subprocess.run(
