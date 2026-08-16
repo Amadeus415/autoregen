@@ -8,15 +8,16 @@ The question is not “can you match this one STEP file?” It is “did you rec
 
 ![accepted frontier](plots/race.png)
 
-Same starting solver. Same twelve families. Same 20-generation budget. Three researchers.
+Same starting solver. Same twelve families. Same 20-generation budget. Four researchers.
 
 | Researcher | Harness | Final `intent_err` | Accepted steps | Solved at |
 |---|---|---:|---:|---|
 | **Grok 4.5** high | grok CLI | **0.000** | 14 | gen 15 |
 | **Gemini 3.7 Flash** high | Antigravity (`agy`) | **0.000** | 8 | gen 9 |
+| **GPT-5.6 Sol** medium | Codex | 0.113 | 7 | — |
 | **GPT-5.6 Terra** high | Codex | 0.134 | 4 | — |
 
-Gemini recovered the whole set in eight accepted steps. Grok got there too, with a longer staircase. Terra learned the box, a cylinder, a tube, and a chamfer, then spent the rest of the budget trying to *recognize* topology on the observed solid instead of letting parameter **names** drive the builder.
+Gemini recovered the whole set in eight accepted steps. Grok got there too, with a longer staircase. Both Codex arms climbed partway: Sol (medium) finished ahead of Terra (high), 0.113 vs 0.134, by binding plate thickness and the two hole families. Neither recovered bosses.
 
 ## The big picture
 
@@ -53,25 +54,25 @@ Keep if strictly lower. Equal or worse is a discard. Rejects stay in the log and
 
 ## The race
 
-Three coding-agent configurations. One hypothesized change per generation. 20 generations.
+Four coding-agent configurations. One hypothesized change per generation. 20 generations.
 
 ![summary](plots/summary.png)
 
-| | Grok 4.5 | Gemini 3.7 Flash | GPT-5.6 Terra |
-|---|---:|---:|---:|
-| Start | 0.258 | 0.258 | 0.258 |
-| End | **0.000** | **0.000** | 0.134 |
-| Keeps | 14 | 8 | 4 |
-| Discards | 6 | 12 | 16 |
-| Wall time | 31 min | 22 min | 14 min |
+| | Grok 4.5 | Gemini 3.7 Flash | GPT-5.6 Sol | GPT-5.6 Terra |
+|---|---:|---:|---:|---:|
+| Start | 0.258 | 0.258 | 0.258 | 0.258 |
+| End | **0.000** | **0.000** | 0.113 | 0.134 |
+| Keeps | 14 | 8 | 7 | 4 |
+| Discards | 6 | 12 | 13 | 16 |
+| Effort | high | high | medium | high |
 
-Raw logs: [`examples/grok-4.5-high.tsv`](examples/grok-4.5-high.tsv) · [`examples/gemini-3.7-flash-high.tsv`](examples/gemini-3.7-flash-high.tsv) · [`examples/gpt-5.6-terra-high.tsv`](examples/gpt-5.6-terra-high.tsv)
+Raw logs: [`examples/grok-4.5-high.tsv`](examples/grok-4.5-high.tsv) · [`examples/gemini-3.7-flash-high.tsv`](examples/gemini-3.7-flash-high.tsv) · [`examples/gpt-5.6-sol-medium.tsv`](examples/gpt-5.6-sol-medium.tsv) · [`examples/gpt-5.6-terra-high.tsv`](examples/gpt-5.6-terra-high.tsv)
 
 ### What they actually recovered
 
 ![per-family error](plots/families.png)
 
-Grok and Gemini finished at zero on every family. Terra’s leftover error is concentrated: bosses barely moved (centroid still wrong), the cylinder is still a box-ish stand-in, and the hole families are only partly parameterized.
+Grok and Gemini finished at zero on every family. Sol recovered the box and both hole plates, then stalled on bosses (centroid still wrong) and the tube. Terra missed those hole families and the bosses too. Same hill, different leftover error.
 
 That is the eval doing its job. A solver can look plausible on the observed member and still fail the held-out sizes.
 
@@ -85,7 +86,11 @@ That is the eval doing its job. A solver can look plausible on the observed memb
 
 ![grok progress](plots/progress-grok-4.5.png)
 
-**GPT-5.6 Terra** tried a different strategy: infer the family from the *observed solid’s topology*, then bind names. That recovered the box, a vertical cylinder, a chamfer, and a tube. Most of the other hypotheses (spheres, cones, tori, polygons, countersinks, pockets) were not on the hill, so they discarded. The log is honest: sixteen rejects, four keeps, frontier stuck at 0.134.
+**GPT-5.6 Sol** (medium) bound height, then width, then depth — one axis per keep — plus a cylinder, plate thickness, a centered hole, and an offset hole. Generation 1 made the score *worse* (0.39) and was discarded. The late keeps are the interesting ones: `thick` at gen 15, then the two hole families. Bosses and the tube never landed. Seven keeps, frontier 0.113.
+
+![sol progress](plots/progress-gpt-5.6-sol.png)
+
+**GPT-5.6 Terra** (high) tried a different strategy: infer the family from the *observed solid’s topology*, then bind names. That recovered the box, a vertical cylinder, a chamfer, and a tube. Most of the other hypotheses (spheres, cones, tori, polygons, countersinks, pockets) were not on the hill, so they discarded. Sixteen rejects, four keeps, frontier stuck at 0.134.
 
 ![terra progress](plots/progress-gpt-5.6-terra.png)
 
@@ -116,10 +121,11 @@ python prepare.py score
 # Local dummy researcher — ≥10 accepted steps
 python prepare.py loop --agent dummy --gens 15 --workdir runs/dummy
 
-# The three arms from this writeup
+# The four arms from this writeup
 make grok45    # grok CLI    · grok-4.5              · high
 make gemini    # antigravity · gemini-3.7-flash-high · high
 make terra     # Codex       · gpt-5.6-terra         · high
+make sol       # Codex       · gpt-5.6-sol           · medium
 
 # Draw the race from examples/*.tsv
 python plots.py

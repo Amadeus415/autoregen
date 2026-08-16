@@ -1,0 +1,22 @@
+gen	start_sha	solver_sha	intent_err	status	hypothesis
+0	d1f8d373b583	d1f8d373b583	0.25771421	keep	baseline
+1	d1f8d373b583	d808d4fb017c	0.39247585	discard	Bind semantic outer-dimension parameters to the generated box extents so held-out length, width, and height variants regenerate at the requested size.
+2	d1f8d373b583	2c25f0a92afc	0.23539890	keep	Bind an exact height parameter to the generated box Z extent while leaving the observed X and Y extents unchanged.
+3	2c25f0a92afc	633286b5904f	0.19674081	keep	Bind an exact width parameter to the generated box X extent while preserving the accepted height binding and observed Y extent.
+4	633286b5904f	e151ec6efbce	0.19674081	discard	Bind an exact length parameter to the generated box Y extent while preserving the accepted width and height bindings.
+5	633286b5904f	3bd95e4b96f9	0.15682262	keep	Bind an exact depth parameter to the generated box Y extent while preserving the accepted width and height bindings.
+6	3bd95e4b96f9	7607340a064f	0.14009414	keep	Recognize exact cylindrical bodies with a radius parameter and regenerate their circular profile from that parameter.
+7	7607340a064f	52cd96e6ade0	0.14009414	discard	Recognize a centered Z-axis through-hole in a rectangular body and regenerate its cut from the hole_radius parameter.
+8	7607340a064f	9d8cee3e69b5	0.14009414	discard	Bind an exact thickness parameter to the generated extrusion Z extent while preserving the accepted width, depth, height, and cylinder behavior.
+9	7607340a064f	9d0186596bee	0.14009414	discard	Recognize exact cylindrical bodies with a diameter parameter and regenerate their circular profile at half that diameter.
+10	7607340a064f	c4d492e8397f	0.14009414	discard	Recognize a single offset Z-through-hole in a rectangular body and drive its radius and center from hole_radius plus hole_x or hole_y parameters.
+11	7607340a064f	cc476f0dea57	0.14009414	discard	Bind a length parameter to the axial Z dimension of an exact outer cylinder when no height parameter is present.
+12	7607340a064f	548ba6d09d60	0.14009414	discard	Bind a length parameter to the generated X extent when width is absent, testing the alternative axis to the previously discarded Y mapping.
+13	7607340a064f	a6907fe134cd	0.14009414	discard	Recognize a centered Z-axis cylindrical through-hole from its volume deficit and cylindrical topology, then regenerate the cut from the radius parameter.
+14	7607340a064f	9b3a0880dc22	0.14009414	discard	Recognize rectangular prisms with four vertically filleted corners and regenerate those corner blends from the fillet_radius parameter.
+15	7607340a064f	d7b57b741ef5	0.11473228	keep	Bind the exact thick parameter to the generated plate Z extent while preserving the accepted width, depth, height, and cylinder behavior.
+16	d7b57b741ef5	4783be8a68ed	0.11473228	discard	Recognize a rectangular base with one cylindrical boss and regenerate its radius, height, and optional center offsets from boss parameters.
+17	d7b57b741ef5	b16ab7ab202d	0.11473228	discard	Recognize annular cylinders and regenerate their outer and inner cylindrical profiles from outer_radius and inner_radius.
+18	d7b57b741ef5	4419c8e04332	0.11372844	keep	Recognize the exact width/depth/thick/hole_d family as a centered through-hole plate and regenerate the cut from the diameter parameter.
+19	4419c8e04332	2b1413bab16f	0.11287179	keep	Recognize the exact offset through-hole plate family and drive the cut diameter and center from hole_d, hole_x, and hole_y.
+20	2b1413bab16f	4cdcd15d6929	0.11287179	discard	Recognize the exact centered through-slot plate family and regenerate its cut from slot_length and slot_width.
