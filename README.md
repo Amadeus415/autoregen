@@ -8,16 +8,16 @@ The question is not “can you match this one STEP file?” It is “did you rec
 
 ![accepted frontier](plots/race.png)
 
-Same starting solver. Same twelve families. Same 20-generation budget. Four researchers.
+Same starting solver. Same twelve families. Same 20-generation budget. Four researchers. Sol then got 20 more generations from its gen-19 frontier — the dashed line on the chart is that budget.
 
-| Researcher | Harness | Final `intent_err` | Accepted steps | Solved at |
-|---|---|---:|---:|---|
-| **Grok 4.5** high | grok CLI | **0.000** | 14 | gen 15 |
-| **Gemini 3.7 Flash** high | Antigravity (`agy`) | **0.000** | 8 | gen 9 |
-| **GPT-5.6 Sol** medium | Codex | 0.113 | 7 | — |
-| **GPT-5.6 Terra** high | Codex | 0.134 | 4 | — |
+| Researcher | Harness | At gen 20 | Final | Keeps | Solved at |
+|---|---|---:|---:|---:|---|
+| **Grok 4.5** high | grok CLI | **0.000** | **0.000** | 14 | gen 15 |
+| **Gemini 3.7 Flash** high | Antigravity (`agy`) | **0.000** | **0.000** | 8 | gen 9 |
+| **GPT-5.6 Sol** medium | Codex | 0.113 | **0.011** | 11 / 40 | — |
+| **GPT-5.6 Terra** high | Codex | 0.134 | 0.134 | 4 | — |
 
-Gemini recovered the whole set in eight accepted steps. Grok got there too, with a longer staircase. Both Codex arms climbed partway: Sol (medium) finished ahead of Terra (high), 0.113 vs 0.134, by binding plate thickness and the two hole families. Neither recovered bosses.
+Gemini recovered the whole set in eight accepted steps. Grok got there too, with a longer staircase. At the shared 20-gen budget Sol was only a little ahead of Terra. The extra 20 is where Sol found the tube and the bosses — 0.113 → 0.011. The leftover is a slightly-wrong cylinder and a couple of unfinished hole families.
 
 ## The big picture
 
@@ -54,16 +54,17 @@ Keep if strictly lower. Equal or worse is a discard. Rejects stay in the log and
 
 ## The race
 
-Four coding-agent configurations. One hypothesized change per generation. 20 generations.
+Four coding-agent configurations. One hypothesized change per generation. Grok, Gemini, and Terra stopped at 20. Sol was resumed for 20 more.
 
 ![summary](plots/summary.png)
 
 | | Grok 4.5 | Gemini 3.7 Flash | GPT-5.6 Sol | GPT-5.6 Terra |
 |---|---:|---:|---:|---:|
 | Start | 0.258 | 0.258 | 0.258 | 0.258 |
-| End | **0.000** | **0.000** | 0.113 | 0.134 |
-| Keeps | 14 | 8 | 7 | 4 |
-| Discards | 6 | 12 | 13 | 16 |
+| At gen 20 | **0.000** | **0.000** | 0.113 | 0.134 |
+| Final | **0.000** | **0.000** | **0.011** | 0.134 |
+| Keeps | 14 | 8 | 11 | 4 |
+| Gens | 20 | 20 | 40 | 20 |
 | Effort | high | high | medium | high |
 
 Raw logs: [`examples/grok-4.5-high.tsv`](examples/grok-4.5-high.tsv) · [`examples/gemini-3.7-flash-high.tsv`](examples/gemini-3.7-flash-high.tsv) · [`examples/gpt-5.6-sol-medium.tsv`](examples/gpt-5.6-sol-medium.tsv) · [`examples/gpt-5.6-terra-high.tsv`](examples/gpt-5.6-terra-high.tsv)
@@ -72,7 +73,7 @@ Raw logs: [`examples/grok-4.5-high.tsv`](examples/grok-4.5-high.tsv) · [`exampl
 
 ![per-family error](plots/families.png)
 
-Grok and Gemini finished at zero on every family. Sol recovered the box and both hole plates, then stalled on bosses (centroid still wrong) and the tube. Terra missed those hole families and the bosses too. Same hill, different leftover error.
+Grok and Gemini finished at zero on every family. After the extra 20, Sol has the box, both holes, the tube, both bosses, and the slot. The leftover 0.011 is a slightly-wrong cylinder (0.097) plus thin misses on counterbore and the hole pair. Terra, at the original budget, still has the bosses almost untouched.
 
 That is the eval doing its job. A solver can look plausible on the observed member and still fail the held-out sizes.
 
@@ -86,7 +87,9 @@ That is the eval doing its job. A solver can look plausible on the observed memb
 
 ![grok progress](plots/progress-grok-4.5.png)
 
-**GPT-5.6 Sol** (medium) bound height, then width, then depth — one axis per keep — plus a cylinder, plate thickness, a centered hole, and an offset hole. Generation 1 made the score *worse* (0.39) and was discarded. The late keeps are the interesting ones: `thick` at gen 15, then the two hole families. Bosses and the tube never landed. Seven keeps, frontier 0.113.
+**GPT-5.6 Sol** (medium) bound height, then width, then depth — one axis per keep — plus a cylinder, plate thickness, a centered hole, and an offset hole. Generation 1 made the score *worse* (0.39) and was discarded. At gen 20 the frontier was 0.113.
+
+Then it was resumed. Gen 21 recovered the tube. Gen 31 recovered both boss families in one step (0.085 → 0.013). Slot and fillet followed. Chamfer, counterbore, and a 2×2 hole grid were tried under the wrong names and discarded. Eleven keeps in 40 tries, frontier 0.011.
 
 ![sol progress](plots/progress-gpt-5.6-sol.png)
 
@@ -126,6 +129,7 @@ make grok45    # grok CLI    · grok-4.5              · high
 make gemini    # antigravity · gemini-3.7-flash-high · high
 make terra     # Codex       · gpt-5.6-terra         · high
 make sol       # Codex       · gpt-5.6-sol           · medium
+make sol-more  # same workdir, 20 more gens (--resume)
 
 # Draw the race from examples/*.tsv
 python plots.py

@@ -20,3 +20,23 @@ gen	start_sha	solver_sha	intent_err	status	hypothesis
 18	d7b57b741ef5	4419c8e04332	0.11372844	keep	Recognize the exact width/depth/thick/hole_d family as a centered through-hole plate and regenerate the cut from the diameter parameter.
 19	4419c8e04332	2b1413bab16f	0.11287179	keep	Recognize the exact offset through-hole plate family and drive the cut diameter and center from hole_d, hole_x, and hole_y.
 20	2b1413bab16f	4cdcd15d6929	0.11287179	discard	Recognize the exact centered through-slot plate family and regenerate its cut from slot_length and slot_width.
+21	2b1413bab16f	de89dd505531	0.08468746	keep	Recognize the exact outer_r/inner_r/height annular-cylinder family and regenerate both radii and height from its parameters.
+22	de89dd505531	81ae3cd66b41	0.08468746	discard	Recognize the exact centered counterbored through-hole plate family and regenerate its through diameter, recess diameter, and recess depth from counterbore parameters.
+23	de89dd505531	7c95a336659e	0.08468746	discard	Recognize the exact width/depth/thick/fillet_r plate family and regenerate its four vertical corner fillets from the radius parameter.
+24	de89dd505531	b550545537e3	0.08468746	discard	Recognize the exact offset cylindrical-boss plate family and regenerate its radius, height, and center from boss_r, boss_h, boss_x, and boss_y.
+25	de89dd505531	1f38df6b098a	0.08468746	discard	Recognize the exact width/depth/thick/chamfer_d plate family and regenerate its four vertical corner chamfers from the distance parameter.
+26	de89dd505531	87b6c00675d8	0.08468746	discard	Recognize the exact rectangular four-hole pattern family and regenerate its 2x2 through-hole layout from hole_d, pitch_x, and pitch_y.
+27	de89dd505531	239f00dc28e8	0.08468746	discard	Recognize the exact centered cylindrical-boss plate family and regenerate its boss radius and height from boss_r and boss_h.
+28	de89dd505531	0f4a6efe955e	0.08468746	discard	Recognize an exact spherical body with a lone radius parameter and regenerate its radius for held-out family members.
+29	de89dd505531	12b157fa1337	0.08468746	discard	Recognize the exact centered blind-hole plate family and regenerate its cut diameter and depth from hole_d and hole_depth.
+30	de89dd505531	686206b37c9d	0.08468746	discard	Recognize centered through-slot plates by semantic slot parameters and regenerate the slot while supporting either thick or height as the plate Z dimension.
+31	de89dd505531	3201a5be9df1	0.01282032	keep	Recognize the public plate_t/boss_d cylindrical-boss families and regenerate the centered or offset boss from its diameter, height, and optional center parameters.
+32	3201a5be9df1	9c770187cef3	0.01066575	keep	Recognize centered through-slot plates whose dimensions use slot_l/slot_len/slot_length and slot_w/slot_width aliases, and regenerate the cut from those parameters.
+33	9c770187cef3	fa999660176d	0.01056640	keep	Recognize the width/depth/height/fillet_r prism family and regenerate its four vertical corner fillets from fillet_r.
+34	fa999660176d	dc31b513fb34	0.01056640	discard	Recognize the width/depth/height/chamfer_d prism family and regenerate its four vertical edge chamfers from chamfer_d.
+35	fa999660176d	31545dfcafcd	0.01056640	discard	Recognize the exact bottom_r/top_r/height conical-frustum family and regenerate both end radii and axial height from its parameters.
+36	fa999660176d	c9be7439ef4a	0.01056640	discard	Recognize the exact centered countersunk through-hole plate family and regenerate its bore and conical recess from hole_d, csk_d, and csk_angle.
+37	fa999660176d	10fb41d28da8	0.01056640	discard	Recognize centered counterbored through-hole plates using common cbore/counterbore diameter and depth parameter aliases and regenerate the stepped cut.
+38	fa999660176d	aa17994e4835	0.01056640	discard	Infer each plain box axis as centered or origin-anchored from the observed bounding box so parameterized variants preserve the intended coordinate convention.
+39	fa999660176d	c28ffcaf9c16	0.01056640	discard	Recognize centered rectangular blind-pocket plates from pocket dimension aliases and regenerate the recess from its length, width, and depth parameters.
+40	fa999660176d	8706f0a8ccd2	0.01056640	discard	Bind an exact thickness parameter to the generated Z extent, extending the accepted thick behavior to this common dimensional alias.

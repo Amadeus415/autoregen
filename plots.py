@@ -175,9 +175,19 @@ def write_race(runs: list[tuple[str, list[Row], str]], out: Path) -> None:
     ax.set_ylabel("intent_err   (lower is better)")
     ax.set_title("Recovering design intent — accepted frontier vs every attempt")
     peak = max(r.intent_err for _, rows, _ in runs for r in rows)
+    xmax = max(r.gen for _, rows, _ in runs for r in rows)
     ax.set_ylim(-0.01, max(0.30, peak + 0.04))
-    ax.set_xlim(-0.6, max(r.gen for _, rows, _ in runs for r in rows) + 0.8)
+    ax.set_xlim(-0.6, xmax + 0.8)
     ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    if xmax > 20:
+        ax.axvline(20, color="#94A3B8", ls="--", lw=1.0, zorder=1)
+        ax.text(
+            20.2,
+            ax.get_ylim()[1] * 0.92,
+            "20-gen budget",
+            color="#64748B",
+            fontsize=9,
+        )
     ax.legend(loc="upper right", fontsize=10)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
