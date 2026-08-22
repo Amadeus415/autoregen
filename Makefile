@@ -1,4 +1,4 @@
-.PHONY: setup generate score dummy grok grok45 gemini terra sol sol-more test chart compare
+.PHONY: setup generate score dummy grok grok45 gemini terra sol sol-more test chart compare walkthrough
 
 PYTHON ?= .venv/bin/python
 
@@ -42,3 +42,7 @@ compare:
 
 test:
 	$(PYTHON) -m pytest tests/ -q
+
+walkthrough:
+	@echo "open http://127.0.0.1:8765"
+	cd walkthrough && python3 -m http.server 8765
